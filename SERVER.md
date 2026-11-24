@@ -1,15 +1,17 @@
-# GitHub-hosted station dashboard
+# Forecourt staff accounts
 
-The public repository contains the source. GitHub Pages displays the login page. The account database and meter photos live in a private folder on the owner's GitHub Codespace. The public API port enforces account permissions on requests. Staff sign in with the username and password created for them in Setup → Manage staff. There is no public registration.
+GitHub Pages hosts the public sign-in screen. Managers and admins create station IDs in Setup → Manage staff. Salespeople enter only their station username and password. No GitHub account or token is needed by a salesperson. Only the repository owner may use the separate owner-token sign-in.
 
-## Owner activation
+## Development and testing
 
-1. Create or start a Codespace on main for this repository. The dev container starts the station service on port 3000. In the Ports panel set port 3000 to Public. This exposes the login endpoint to staff.
-2. Open the GitHub Pages dashboard, expand Repository owner, and enter the Codespace name and your GitHub token privately. Initial connection requires permission to read that Codespace and write repository contents. The app verifies Codespace ownership, repository, and health before committing the public endpoint to station-config.js. Allow GitHub Pages to publish that commit. For subsequent owner logins only GitHub identity verification is needed. The app holds tokens in memory.
-3. In Setup → Manage staff create a salesperson or manager with a station username and password. Salespeople use only Nozzle shifts. They start and close a shift with separate readings and meter photos. Managers can review those photos. In Setup, verify nozzle purchase rates and import any previous browser ledger from the device that holds it.
+Use the dev container to test the Node.js 24 backend. The startup script creates its SQLite database outside the public repository under /workspaces/.forecourt-private. For local tests, serve the frontend locally and set its local station-config.js to the test API origin. Set ALLOWED_ORIGIN on the test API to allow the local frontend. Keep test configuration out of the Pages branch.
 
-The Codespace must be running during staff use. GitHub may stop it after inactivity and may delete stopped Codespaces after the retention period. Restart the same Codespace to reconnect. GitHub applies its compute/storage quotas and billing settings. This is a development host with interruptions.
+GitHub Codespaces is a development and testing service. GitHub's additional product terms exclude hosting a production-facing application in Codespaces. Do not connect the public production dashboard to a Codespace.
 
-## Private data backup
+## Production
 
-The SQLite database is under /workspaces/.forecourt-private, outside the repository. Keep private backups before deleting the Codespace. Use a SQLite online backup or stop the service before copying the database and any journal files. A dashboard ledger export omits accounts and meter photos. Never upload the database or actual meter photos to the public repository.
+The Pages dashboard requires an HTTPS API running server.mjs with private persistent storage on a production host. Until configured, it shows the sign-in screen and an activation notice. No signed-out visitor can open the ledger through the dashboard. The public code repository contains no live accounts, credentials, meter photos or database.
+
+The service accepts DATA_DIR, PORT, BIND_HOST and ALLOWED_ORIGIN. Use https://iemfaraz.github.io for the frontend origin. Supply ADMIN_LOGIN and ADMIN_PASSWORD privately for the initial administrator or enable the repository owner's verified GitHub-token sign-in with STATION_GITHUB_OWNER=1. The initialized database contains password hashes and private photo records. Back it up using SQLite online backup or stop the service before copying it. After confirming API health and authentication, set window.STATION_API in station-config.js to the production HTTPS origin.
+
+The existing Deploy station backend workflow is optional for a separately authorized server. It is not needed for local development.
