@@ -1,0 +1,68 @@
+name: Deploy station backend
+on: workflow_dispatch
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: station-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: station-production
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate deployment settings
+        env:
+          STATION_API: ${{ vars.STATION_API }}
+          SSH_TARGET: ${{ vars.STATION_SSH_TARGET }}
+          SSH_KEY: ${{ secrets.STATION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.STATION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_TARGET" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'Set STATION_SSH_TARGET to user@host.'; exit 1; }
+          [[ -n "$SSH_KEY" && -n "$SSH_KNOWN_HOSTS" ]] || { echo 'Set the SSH key and pinned host key.'; exit 1; }
+          node -e "const u=new URL(process.env.STATION_API); if(u.protocol!=='https:' || u.origin!==process.env.STATION_API) throw Error('Set STATION_API to an HTTPS origin without a trailing slash')"
+          install -d -m 700 ~/.ssh
+          umask 077
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/station
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Install station service
+        env:
+          SSH_TARGET: ${{ vars.STATION_SSH_TARGET }}
+        run: |
+          set -euo pipefail
+          opts=(-i ~/.ssh/station -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          ssh "${opts[@]}" "$SSH_TARGET" 'umask 077; mkdir -p ~/.local/share/forecourt-station'
+          scp "${opts[@]}" server.mjs "$SSH_TARGET:.local/share/forecourt-station/server.next.mjs"
+          ssh "${opts[@]}" "$SSH_TARGET" 'bash -s' < deploy/install.sh
+      - name: Verify API and activate staff mode
+        env:
+          STATION_API: ${{ vars.STATION_API }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          origin="https://${GITHUB_REPOSITORY_OWNER}.github.io"
+          curl --fail --silent --show-error --retry 10 --retry-all-errors --max-time 8 "$STATION_API/health" | jq -e '.ok == true'
+          status=$(curl --silent --show-error --max-time 10 -H "Origin: $origin" -D "$RUNNER_TEMP/station-headers" -o "$RUNNER_TEMP/station-response" -w '%{http_code}' "$STATION_API/state")
+          [[ "$status" = 401 ]]
+          jq -e '.error == "Please sign in."' "$RUNNER_TEMP/station-response"
+          tr -d '\r' < "$RUNNER_TEMP/station-headers" | grep -Fxi "Access-Control-Allow-Origin: $origin"
+          node -e "require('fs').writeFileSync('station-config.js','window.STATION_API = '+JSON.stringify(process.env.STATION_API)+';\n')"
+          if ! git diff --quiet -- station-config.js; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add station-config.js
+            git commit -m 'Connect Pages to the verified station backend'
+            git push origin HEAD:main
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds"
+          pages=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url)
+          for i in {1..25}; do
+            if curl -fsS --max-time 6 "${pages%/}/station-config.js?run=$GITHUB_RUN_ID-$i" | cmp -s - station-config.js; then exit 0; fi
+            sleep 8
+          done
+          echo 'Could not verify the updated Pages configuration.' >&2
+          exit 1
