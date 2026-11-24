@@ -8,27 +8,14 @@ if(!resp.ok){let problem=await resp.json().catch(()=>({}));if(resp.status===401&
 function lock(){
   token='';staffUser=null;rows=[];$('view').replaceChildren();$('nav').replaceChildren();$('modal').close();
   main.hidden=true;access.hidden=false;$('identity').textContent='Station access';$('account').hidden=true;
-  access.innerHTML='<h1 style="font-size:32px">Staff sign-in</h1><p>Use the username and password issued by your station manager.</p><form id="signin"><label>Username<input name="login" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><p class="err" role="alert"></p><button class="btn primary">Sign in</button></form><details><summary>Repository owner</summary><p>Open the backend dashboard with the station owner’s GitHub token.</p><form id="ownerform">'+(endpoint?'':'<label>Station Codespace name<input name="space" placeholder="Name from GitHub Codespaces" required></label>')+'<label>Owner GitHub token<input name="githubToken" type="password" autocomplete="off" required></label><p class="err" role="alert"></p><button class="btn">Open backend dashboard</button></form></details>';
+  access.innerHTML='<h1 style="font-size:32px">Staff sign-in</h1><p>Use the username and password issued by your station manager.</p><form id="signin"><label>Username<input name="login" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><p class="err" role="alert"></p><button class="btn primary">Sign in</button></form><details><summary>Repository owner</summary><p>Open the backend dashboard with the station owner’s GitHub token.</p><form id="ownerform"><label>Owner GitHub token<input name="githubToken" type="password" autocomplete="off" required></label><p class="err" role="alert"></p><button class="btn">Open backend dashboard</button></form></details>';
+  if(!endpoint){const msg=document.createElement('p');msg.setAttribute('role','status');msg.textContent='Shared sign-in is awaiting backend activation.';access.querySelector('h1').after(msg);access.querySelectorAll('input,button').forEach(el=>el.disabled=true)}
   const finish=async result=>{token=result.token;await refresh(true);access.replaceChildren()};
   $('signin').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button');btn.disabled=true;try{await finish(await api('/login',Object.fromEntries(new FormData(f))))}catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
   $('ownerform').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button'),b=Object.fromEntries(new FormData(f));btn.disabled=true;try{
-    if(!endpoint){const configured=await connectCodespace(b.space,b.githubToken);endpoint=configured}
+    if(!endpoint)throw Error('Shared login is awaiting backend activation.');
     await finish(await api('/owner',{githubToken:b.githubToken}));
   }catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
-}
-async function connectCodespace(name,ownerToken){
-  name=name.trim();if(!/^[a-z0-9-]{1,100}$/.test(name))throw Error('Enter the Codespace name from your GitHub account.');
-  async function github(path,body){const response=await fetch('https://api.github.com'+path,{method:body?'PUT':'GET',cache:'no-store',referrerPolicy:'no-referrer',headers:{Authorization:'Bearer '+ownerToken,Accept:'application/vnd.github+json',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
-    if(!response.ok)throw Error('GitHub could not complete owner setup ('+response.status+'). Check the token and Codespace permissions.');
-    return response.json()}
-  const [user,space]=await Promise.all([github('/user'),github('/user/codespaces/'+name)]);
-  if(user.id!==328499199||space.owner?.id!==user.id||space.repository?.full_name!=='iemfaraz/Forecourt-pump-'||space.state!=='Available')throw Error('Select a running Codespace owned by iemfaraz for this repository.');
-  const origin='https://'+name+'-3000.app.github.dev';
-  const check=await fetch(origin+'/health',{cache:'no-store',credentials:'omit',redirect:'error'});
-  if(!check.ok||(await check.json()).station!=='forecourt')throw Error('Start the station service and make port 3000 public.');
-  const path='/repos/iemfaraz/Forecourt-pump-/contents/station-config.js',config=await github(path);
-  await github(path,{sha:config.sha,branch:'main',message:'Connect GitHub Pages to the station Codespace',content:btoa('window.STATION_API = '+JSON.stringify(origin)+';\n')});
-  return origin;
 }
 async function refresh(first=false){let s=await api('/state');staffUser=s.user;version=s.revision;rows=s.rows;if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Shared station records';render()}
 async function staffSave(next){await api('/ledger',{revision:version,rows:next});await refresh()}
