@@ -29,8 +29,8 @@ if(typeof b.password!=='string'||b.password.length<12||b.password.length>128)fai
 let salt=randomBytes(16).toString('hex'),h=await hash(b.password,salt);
 if(one('SELECT id FROM users WHERE login=?',login))fail('Username already exists.',409);
 run('INSERT INTO users(id,login,name,role,salt,hash) VALUES(?,?,?,?,?,?)',randomUUID(),login,name,role,salt,h.toString('hex'))}
-if(!one('SELECT id FROM users LIMIT 1')){if(!process.env.ADMIN_PASSWORD)throw Error('Set ADMIN_PASSWORD securely on the server to initialize the first administrator.');
-await createUser({login:process.env.ADMIN_LOGIN||'admin',name:'Station administrator',password:process.env.ADMIN_PASSWORD},'admin');
+if(!one('SELECT id FROM users LIMIT 1')){if(!process.env.ADMIN_PASSWORD && process.env.STATION_GITHUB_OWNER!=='1')throw Error('Set ADMIN_PASSWORD securely on the server to initialize the first administrator.');
+await createUser({login:process.env.ADMIN_LOGIN||'admin',name:'Station administrator',password:process.env.ADMIN_PASSWORD||randomBytes(48).toString('base64url')},'admin');
 transaction(()=>['Petrol','High speed diesel'].forEach((fuel,i)=>['A','B'].forEach((letter,j)=>put({id:'n'+i+j,type:'Nozzle',name:(i?'Diesel ':'Petrol ')+letter,fuel,status:'Active'}))))}
 const digest=s=>createHash('sha256').update(s).digest('hex');
 const orders=['Morning','Evening','Night'], order=r=>r.date+orders.indexOf(r.shift);
@@ -47,7 +47,20 @@ try{res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Opti
 if(req.headers.origin){if(!origins.has(req.headers.origin))fail('Origin is not configured.',403);res.setHeader('Access-Control-Allow-Origin',req.headers.origin)}
 if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization');res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');res.writeHead(204);res.end();return}
 const path=new URL(req.url,'http://localhost').pathname,action=req.method+' '+path;
-if(action==='GET /health')return send({ok:true});
+if(action==='GET /health')return send({ok:true,station:'forecourt'});
+if(action==='POST /owner'){
+  if(process.env.STATION_GITHUB_OWNER!=='1')fail('Owner token sign-in is disabled.',403);
+  const body=await read(req);
+  if(typeof body.githubToken!=='string'||body.githubToken.length>400||body.githubToken.length<15)fail('Enter a valid GitHub token.',401);
+  const check=await fetch('https://api.github.com/user',{headers:{Authorization:'Bearer '+body.githubToken,Accept:'application/vnd.github+json','User-Agent':'Forecourt-station'},signal:AbortSignal.timeout(10000)});
+  if(!check.ok)fail('GitHub could not verify this token.',401);
+  const github=await check.json();
+  if(github.id!==328499199)fail('Only the station repository owner can use this sign-in.',403);
+  const admin=one("SELECT * FROM users WHERE login=? AND role='admin' AND active=1",process.env.ADMIN_LOGIN||'admin');
+  if(!admin)fail('Owner profile unavailable.',403);
+  const session=randomBytes(32).toString('hex');run('INSERT INTO sessions VALUES(?,?,?)',digest(session),admin.id,Date.now()+12*3600000);
+  return send({token:session,user:profile(admin)})
+}
 if(action==='POST /login'){let b=await read(req),login=loginName(b.login),key=login,now=Date.now(),a=attempts.get(key);if(!a||a.until<=now){a={n:0,until:now+900000};attempts.set(key,a)}if(++a.n>12)fail('Too many attempts. Try again in 15 minutes.',429);
 const u=one('SELECT * FROM users WHERE login=?',login);let h=await hash(String(b.password||'').slice(0,128),u?.salt||'unused-login-salt');
 if(!u?.active||!timingSafeEqual(h,Buffer.from(u.hash,'hex')))fail('Incorrect username or password.',401);attempts.delete(key);
@@ -77,3 +90,4 @@ validateMeter([...list.filter(x=>x.nozzle===r.nozzle&&x.id!==r.id),r]);put(r);ru
 const match=path.match(/^\/photo\/([a-f\d-]+)\/(opening|closing)$/);if(req.method==='GET'&&match){const r=one('SELECT body FROM records WHERE id=?',match[1]);if(!r||(!isLead(u)&&JSON.parse(r.body).owner!==u.id))fail('Photo unavailable.',403);const photo=one('SELECT bytes FROM photos WHERE id=? AND stage=?',match[1],match[2]);if(!photo)fail('Photo unavailable.',404);res.writeHead(200,{'Content-Type':'image/jpeg'});res.end(Buffer.from(photo.bytes));return}
 fail('Unknown endpoint.',404)}catch(e){if(!e.status)console.error(e.message);send({error:e.status?e.message:'Station service error.'},e.status||500)}});
 server.listen(Number(process.env.PORT||3000),process.env.BIND_HOST||'127.0.0.1');
+
