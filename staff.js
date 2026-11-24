@@ -1,13 +1,35 @@
 'use strict';
 let staffUser=null,version=0,token='',accountList=[];
-const endpoint=(window.STATION_API||'').replace(/\/$/,'');
+let endpoint=(window.STATION_API||'').replace(/\/$/,'');
 const isSales=()=>staffUser?.role==='salesperson';
 const main=document.querySelector('main'), access=$('access');
-async function api(path,data,photo=false){const resp=await fetch(endpoint+path,{method:data===undefined?'GET':'POST',cache:'no-store',headers:{...(token?{Authorization:'Bearer '+token}:{}),...(data===undefined?{}:{'Content-Type':'application/json'})},body:data===undefined?undefined:JSON.stringify(data)});
+async function api(path,data,photo=false){if(!endpoint)throw Error('The station backend is awaiting owner setup.');const resp=await fetch(endpoint+path,{method:data===undefined?'GET':'POST',cache:'no-store',headers:{...(token?{Authorization:'Bearer '+token}:{}),...(data===undefined?{}:{'Content-Type':'application/json'})},body:data===undefined?undefined:JSON.stringify(data)});
 if(!resp.ok){let problem=await resp.json().catch(()=>({}));if(resp.status===401&&path!=='/login')lock();throw Error(problem.error||'Station server unavailable.')}return photo?resp.blob():resp.json()}
-function lock(){token='';staffUser=null;rows=[];$('view').replaceChildren();$('nav').replaceChildren();$('modal').close();main.hidden=true;access.hidden=false;$('identity').textContent='Staff access';$('account').hidden=true;
-access.innerHTML='<h2>Station sign-in</h2><p>Use the account created by your station manager.</p><form id="signin"><label>Username<input name="login" autocomplete="username" required></label><br><label>Password<input name="password" type="password" autocomplete="current-password" required></label><p class="err" role="alert"></p><button class="btn primary">Sign in</button></form>';
-$('signin').onsubmit=async e=>{e.preventDefault();let f=e.currentTarget;try{let a=await api('/login',Object.fromEntries(new FormData(f)));token=a.token;await refresh(true)}catch(err){f.querySelector('.err').textContent=err.message}}}
+function lock(){
+  token='';staffUser=null;rows=[];$('view').replaceChildren();$('nav').replaceChildren();$('modal').close();
+  main.hidden=true;access.hidden=false;$('identity').textContent='Station access';$('account').hidden=true;
+  access.innerHTML='<h1 style="font-size:32px">Staff sign-in</h1><p>Use the username and password issued by your station manager.</p><form id="signin"><label>Username<input name="login" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><p class="err" role="alert"></p><button class="btn primary">Sign in</button></form><details><summary>Repository owner</summary><p>Open the backend dashboard with the station owner’s GitHub token.</p><form id="ownerform">'+(endpoint?'':'<label>Station Codespace name<input name="space" placeholder="Name from GitHub Codespaces" required></label>')+'<label>Owner GitHub token<input name="githubToken" type="password" autocomplete="off" required></label><p class="err" role="alert"></p><button class="btn">Open backend dashboard</button></form></details>';
+  const finish=async result=>{token=result.token;await refresh(true);access.replaceChildren()};
+  $('signin').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button');btn.disabled=true;try{await finish(await api('/login',Object.fromEntries(new FormData(f))))}catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
+  $('ownerform').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button'),b=Object.fromEntries(new FormData(f));btn.disabled=true;try{
+    if(!endpoint){const configured=await connectCodespace(b.space,b.githubToken);endpoint=configured}
+    await finish(await api('/owner',{githubToken:b.githubToken}));
+  }catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
+}
+async function connectCodespace(name,ownerToken){
+  name=name.trim();if(!/^[a-z0-9-]{1,100}$/.test(name))throw Error('Enter the Codespace name from your GitHub account.');
+  async function github(path,body){const response=await fetch('https://api.github.com'+path,{method:body?'PUT':'GET',cache:'no-store',referrerPolicy:'no-referrer',headers:{Authorization:'Bearer '+ownerToken,Accept:'application/vnd.github+json',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+    if(!response.ok)throw Error('GitHub could not complete owner setup ('+response.status+'). Check the token and Codespace permissions.');
+    return response.json()}
+  const [user,space]=await Promise.all([github('/user'),github('/user/codespaces/'+name)]);
+  if(user.id!==328499199||space.owner?.id!==user.id||space.repository?.full_name!=='iemfaraz/Forecourt-pump-'||space.state!=='Available')throw Error('Select a running Codespace owned by iemfaraz for this repository.');
+  const origin='https://'+name+'-3000.app.github.dev';
+  const check=await fetch(origin+'/health',{cache:'no-store',credentials:'omit',redirect:'error'});
+  if(!check.ok||(await check.json()).station!=='forecourt')throw Error('Start the station service and make port 3000 public.');
+  const path='/repos/iemfaraz/Forecourt-pump-/contents/station-config.js',config=await github(path);
+  await github(path,{sha:config.sha,branch:'main',message:'Connect GitHub Pages to the station Codespace',content:btoa('window.STATION_API = '+JSON.stringify(origin)+';\n')});
+  return origin;
+}
 async function refresh(first=false){let s=await api('/state');staffUser=s.user;version=s.revision;rows=s.rows;if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Shared station records';render()}
 async function staffSave(next){await api('/ledger',{revision:version,rows:next});await refresh()}
 $('account').onclick=async()=>{if(!endpoint){alert('Staff accounts require the station server. The owner must connect it before staff can sign in.');return}try{await api('/logout',{})}finally{lock()}};
@@ -25,6 +47,7 @@ function shiftForm(r){let active=get('Nozzle').filter(n=>n.status==='Active');if
 dialog(r?'Close shift':'Start shift',html+photoInput,r?'Save closing reading':'Save opening reading',async b=>{b.photo=await meterPhoto(b.photo);for(let k of ['close','open','rate','returned'])if(k in b)b[k]=Number(b[k]);if(r)b.id=r.id;await api(r?'/close':'/start',b);$('date').value=r?.date||b.date;await refresh()})}
 async function staffAccounts(){accountList=await api('/users');let html='<div style="grid-column:1/-1">'+table(['Name','Username','Role'],accountList.map(a=>[E(a.name),E(a.login),E(a.role)]))+'</div>'+input('Full name','name')+input('Username','login','text','minlength="3" autocomplete="off"')+input('Password','password','password','minlength="12" maxlength="128" autocomplete="new-password"')+choices('Role','role',(staffUser.role==='admin'?['salesperson','manager','admin']:['salesperson']).map(v=>[v,v]));dialog('Staff accounts',html,'Create account',async b=>{await api('/users',b);alert('Account created for '+b.name+'.')})}
 $('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.photo){let blob=await api('/photo/'+encodeURIComponent(el.dataset.photo)+'/'+el.dataset.stage,undefined,true),url=URL.createObjectURL(blob);let d=document.createElement('dialog');d.innerHTML='<button class="btn">Close</button><img style="display:block;max-width:100%" alt="Meter photo">';d.querySelector('img').src=url;d.querySelector('button').onclick=()=>d.close();d.onclose=()=>{URL.revokeObjectURL(url);d.remove()};document.body.append(d);d.showModal()}if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
-if(endpoint){main.hidden=true;if(token)refresh(true).catch(()=>lock());else lock()}
+lock();
 
 document.addEventListener('visibilitychange',()=>{if(endpoint&&staffUser&&!document.hidden&&!document.querySelector('dialog[open]'))refresh().catch(err=>console.warn(err.message))});
+
