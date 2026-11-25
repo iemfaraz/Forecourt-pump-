@@ -118,7 +118,8 @@ const DeviceStation=(()=>{
         const raw=atob(b.photo.slice(23)),photo=new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:'image/jpeg'});
         let r,stage;if(path==='/start'){
           const n=state.rows.find(x=>x.id===b.nozzle&&x.type==='Nozzle'&&x.status==='Active');assert(n,'Select an active nozzle.');
-          r={id:crypto.randomUUID(),type:'Reading',readingMode:'remaining',owner:current.id,person:current.name,fuel:n.fuel,nozzle:n.id,date:b.date,shift:b.shift,open:b.open,close:'',rate:b.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
+          assert(/^([01]\d|2[0-3]):[0-5]\d$/.test(b.startTime),'Enter a valid shift start time.');
+          r={id:crypto.randomUUID(),startTime:b.startTime,type:'Reading',readingMode:'remaining',owner:current.id,person:current.name,fuel:n.fuel,nozzle:n.id,date:b.date,shift:b.shift,open:b.open,close:'',rate:b.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
           state.rows.push(r);stage='opening';
         }else{
           r=state.rows.find(x=>x.id===b.id&&x.type==='Reading'&&x.owner);
