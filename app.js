@@ -83,7 +83,15 @@ function tankCards(past,dt){
 function tankOptions(f,selected){
   return stationTanks().filter(t=>t.fuel===f).map(t=>'<option value="'+E(t.id)+'" '+(selected===t.id?'selected':'')+'>'+E(t.name)+'</option>').join('')
 }
-let progressPeriod='Daily';
+  function nozzleCell(r){
+  const when=t=>t?E(new Date(t).toLocaleString()):'—';
+    const done=r.close!=='';
+    const photo=stage=>!r.owner?'':'<button data-workphoto="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';
+    const lines=[['Fuel',E(r.fuel)],['Opening L',fmt(r.open)],['Closing L',done?fmt(r.close):'—'],['Returns L',fmt(r.returned||0)],['Sold L',done?fmt(net(r)):'—'],['PKR/L',fmt(r.rate)],['Sales PKR',done?fmt(net(r)*r.rate):'—'],['Closed at',when(r.ended)],['Closed by',E(r.closedBy||'—')]];
+    return '<dl class="nozzle-values">'+lines.map(([k,v])=>'<dt>'+k+'</dt><dd>'+v+'</dd>').join('')+'</dl>'+photo('opening')+(done?photo('closing'):'')
+  }
+let progressPeriod='Daily',progressOwner='';
+const reportOwner=r=>r.owner||'legacy:'+r.person;
 function progressDates(selected,period){
   const start=new Date(selected+'T00:00:00Z'),end=new Date(start);
   if(period==='Weekly'){
@@ -96,22 +104,44 @@ function progressDates(selected,period){
   }
   return [start,end].map(d=>d.toISOString().slice(0,10))
 }
+function progressUsers(){
+  const names=new Map(get('Reading').map(r=>[reportOwner(r),r.person]));
+  for(const user of accountList)names.set(user.id,user.name+' ('+user.login+')');
+  return names
+}
+function progressShiftTable(entries){
+  const groups=new Map(),used=new Set();
+  for(const r of entries){
+    const key=shiftGroupKey(r);
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(r);used.add(r.nozzle)
+  }
+  const nozzles=Array.from(new Set([...get('Nozzle').filter(n=>n.status==='Active'||used.has(n.id)).map(n=>n.id),...used]));
+  const body=Array.from(groups.values(),members=>{
+    const r=members[0],closed=members.filter(n=>n.close!=='');
+    return [E(r.date),E(r.person),E(r.shift),E(shiftTime(r)),closed.length===members.length?'Closed':'Open',...nozzles.map(id=>members.filter(n=>n.nozzle===id).map(nozzleCell).join('<hr>')||'—'),fmt(sum(closed,net)),fmt(sum(closed,n=>net(n)*n.rate))]
+  });
+  return '<h3>Shift details</h3>'+table(['Date','Salesperson','Shift','Start time','Status',...nozzles.map(nozzleName),'Total sold L','Total sales PKR'],body,'No shifts recorded for this selection.')
+}
 function progressReport(){
   const [from,to]=progressDates(date(),progressPeriod);
   const entries=rows.filter(r=>r.date>=from&&r.date<=to).sort((a,b)=>a.date.localeCompare(b.date));
-  const deliveries=entries.filter(r=>r.type==='Delivery'),sales=entries.filter(r=>r.type==='Reading'&&r.close!==''),mart=entries.filter(r=>r.type==='Mart'),cash=entries.filter(r=>r.type==='Cash entry'),credit=entries.filter(r=>r.type==='Customer debit');
+  const deliveries=entries.filter(r=>r.type==='Delivery'),mart=entries.filter(r=>r.type==='Mart'),cash=entries.filter(r=>r.type==='Cash entry'),credit=entries.filter(r=>r.type==='Customer debit');
   const totals=stats(entries),opening=stats(rows.filter(r=>r.date<from)).cash;
-  return '<h2>'+progressPeriod+' progress report</h2><p>'+from+(from===to?'':' through '+to)+'</p>'+
-    '<div class="cards">'+card('Delivered · L',fmt(sum(deliveries,r=>r.qty)))+card('Fuel sold · L',fmt(totals.litres))+card('Fuel sales · PKR',fmt(totals.rev))+card('Mart sales · PKR',fmt(totals.mart))+'</div>'+
+  const shifts=entries.filter(r=>r.type==='Reading'&&(!progressOwner||reportOwner(r)===progressOwner));
+  const title='<h2>'+progressPeriod+' progress report</h2><p>'+from+(from===to?'':' through '+to)+' · '+E(progressOwner?progressUsers().get(progressOwner):'All users')+'</p>';
+  const shiftTable=progressShiftTable(shifts);
+  if(progressOwner)return title+'<div class="cards">'+card('Fuel sold · L',fmt(sum(shifts,net)))+card('Fuel sales · PKR',fmt(sum(shifts,r=>net(r)*r.rate)))+'</div>'+shiftTable;
+  return title+
+    '<div class="cards">'+card('Delivered · L',fmt(sum(deliveries,r=>r.qty)))+card('Fuel sold · L',fmt(totals.litres))+card('Fuel sales · PKR',fmt(totals.rev))+card('Mart sales · PKR',fmt(totals.mart))+'</div>'+shiftTable+
     '<h3>Deliveries</h3>'+table(['Date','Supplier','Fuel','Tank','Litres','Unit cost · PKR','Paid · PKR'],deliveries.map(r=>[E(r.date),E(r.company),E(r.fuel),E(stationTanks().find(t=>t.id===(r.tank||defaultTank(r.fuel)))?.name),fmt(r.qty),fmt(r.cost),fmt(r.paid)]),'No deliveries in this period.')+
-    '<h3>Fuel sales</h3>'+table(['Date','Shift','Salesperson','Nozzle','Fuel','Sold · L','Sales · PKR'],sales.map(r=>[E(r.date),E(r.shift),E(r.person),E(nozzleName(r.nozzle)),E(r.fuel),fmt(net(r)),fmt(net(r)*r.rate)]),'No completed nozzle sales in this period.')+
     '<h3>Mart</h3>'+table(['Date','Description','Sales · PKR','Purchases · PKR','Paid · PKR'],mart.map(r=>[E(r.date),E(r.name),fmt(r.sale),fmt(r.buy),fmt(r.paid)]),'No mart entries in this period.')+
     '<h3>Cash book</h3><div class="cards">'+card('Opening cash · PKR',fmt(opening))+card('Net cash movement · PKR',fmt(totals.cash))+card('Closing cash · PKR',fmt(opening+totals.cash))+'</div>'+
     table(['Date','Category','Description','Amount · PKR'],cash.map(r=>[E(r.date),E(r.category),E(r.name),fmt(r.amount)]),'No cash-book entries in this period.')+
     '<h3>Customer credit and repayments</h3>'+table(['Date','Customer','Fuel on credit · PKR','Repaid · PKR'],credit.map(r=>[E(r.date),E(r.name),fmt(r.buy),fmt(r.paid)]),'No customer credit entries in this period.')
 }
 function overviewActions(){
-  return '<section class="overview-actions"><div class="head"><h2>Station progress</h2></div><div class="actions"><label>Report period <select id="progressPeriod">'+['Daily','Weekly','Monthly','Yearly'].map(v=>'<option '+(v===progressPeriod?'selected':'')+'>'+v+'</option>').join('')+'</select></label><button class="btn" id="viewProgress">View report</button><button class="btn" id="printProgress">Print / Save PDF</button><button class="btn" id="addTank">＋ Add tank</button><button class="btn" id="addFuel">＋ Add fuel type</button><button class="btn" data-all-shift>Start all-nozzle shift</button></div></section>'
+  return '<section class="overview-actions"><div class="head"><h2>Station progress</h2></div><div class="actions"><label>Report period <select id="progressPeriod">'+['Daily','Weekly','Monthly','Yearly'].map(v=>'<option '+(v===progressPeriod?'selected':'')+'>'+v+'</option>').join('')+'</select></label><label>User <select id="progressOwner"><option value="">All users</option>'+Array.from(progressUsers(),([id,name])=>'<option value="'+E(id)+'" '+(progressOwner===id?'selected':'')+'>'+E(name)+'</option>').join('')+'</select></label><button class="btn" id="viewProgress">View report</button><button class="btn" id="printProgress">Print / Save PDF</button><button class="btn" id="addTank">＋ Add tank</button><button class="btn" id="addFuel">＋ Add fuel type</button><button class="btn" data-all-shift>Start all-nozzle shift</button></div></section>'
 }
 function printProgress(){
   document.getElementById('reportFrame')?.remove();
@@ -119,8 +149,8 @@ function printProgress(){
   frame.style.cssText='position:fixed;left:-200vw;width:1000px;height:600px;border:0';document.body.append(frame);
   const doc=frame.contentDocument;doc.title='Forecourt '+progressPeriod+' progress '+date();
   const style=doc.createElement('style');
-  style.textContent='@page{size:A4 landscape;margin:12mm}body{font:10pt Arial,sans-serif;color:#17212b}.cards{display:flex;gap:20px;margin:12px 0}.card{display:grid;gap:4px}table{border-collapse:collapse;width:100%}th,td{text-align:left;border:1px solid #aaa;padding:4px}thead{display:table-header-group}tr{break-inside:avoid}h3{break-after:avoid}';
-  doc.head.append(style);doc.body.append($('progressReport').cloneNode(true));frame.contentWindow.focus();frame.contentWindow.print()
+  style.textContent='@page{size:A4 landscape;margin:12mm}body{font:10pt Arial,sans-serif;color:#17212b}.cards{display:flex;gap:20px;margin:12px 0}.card{display:grid;gap:4px}table{border-collapse:collapse;width:100%}th,td{text-align:left;border:1px solid #aaa;padding:4px}thead{display:table-header-group}tr{break-inside:avoid}h3{break-after:avoid}td{vertical-align:top;overflow-wrap:anywhere}dl,dd{margin:0}dt{color:#52655c}dd{margin-bottom:3px}.scroll table{font-size:8pt}';
+  doc.head.append(style);const printed=$('progressReport').cloneNode(true);printed.querySelectorAll('button').forEach(b=>b.remove());doc.body.append(printed);frame.contentWindow.focus();frame.contentWindow.print()
 }
 function render(){if(!staffUser)return;let dt=date(),a=rows.filter(r=>r.date===dt),past=rows.filter(r=>r.date<=dt),d=stats(a),p=stats(past),v='',t=typeForPage[page];
 $('nav').innerHTML=pages.map((n,i)=>'<button data-page="'+i+'" class="'+(i===page?'on':'')+'">'+n+'</button>').join('');
@@ -156,4 +186,4 @@ if(kind==='Reading')r.fuel=get('Nozzle').find(n=>n.id===r.nozzle).fuel;await sav
 $('remove').onclick=async()=>{if(confirm('Delete this entry and recalculate balances?'))try{await save(rows.filter(x=>x.id!==editing));$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('date').onchange=()=>{if(date())render()};$('add').onclick=()=>page===8?newAccount():page===6?window.print():show(typeForPage[page]);$('nav').onclick=e=>{if(e.target.dataset.page!==undefined){page=Number(e.target.dataset.page);render()}};
 $('view').onclick=e=>{if(e.target.hasAttribute('data-shift-details'))toggleNozzleDetails(e.target);if(e.target.id==='viewProgress'){$('progressReport').focus();$('progressReport').scrollIntoView({block:'start'})}if(e.target.hasAttribute('data-all-shift')){if(get('Nozzle').some(n=>n.status==='Active'))batchShift();else alert('Add an active nozzle in Setup first.')} if(e.target.id==='printProgress')printProgress();if(e.target.id==='addTank')show('Tank');if(e.target.id==='addFuel')show('Fuel type');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
-$('view').onchange=async e=>{if(e.target.id==='progressPeriod'){progressPeriod=e.target.value;$('progressReport').innerHTML=progressReport();return}if(e.target.id==='restore'&&e.target.files[0])try{let next=JSON.parse(await e.target.files[0].text());if(!Array.isArray(next))throw Error('Invalid backup.');validate(next);if(confirm('Replace all station records with this backup?'))await save(next)}catch(err){alert(err.message)}};
+$('view').onchange=async e=>{if(e.target.id==='progressPeriod'||e.target.id==='progressOwner'){progressPeriod=$('progressPeriod').value;progressOwner=$('progressOwner').value;$('progressReport').innerHTML=progressReport();return}if(e.target.id==='restore'&&e.target.files[0])try{let next=JSON.parse(await e.target.files[0].text());if(!Array.isArray(next))throw Error('Invalid backup.');validate(next);if(confirm('Replace all station records with this backup?'))await save(next)}catch(err){alert(err.message)}};
