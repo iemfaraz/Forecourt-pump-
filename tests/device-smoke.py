@@ -152,8 +152,44 @@ try:
     wait.until(lambda d: 'Password reset.' in d.find_element(By.CSS_SELECTOR,'#signin .err').text)
     sign_in('admin',newpass)
     element('button[data-stage=opening]')
+    element('[data-page="7"]').click()
+    element('#addTank').click()
+    fill('#fields [name=name]', 'Reserve petrol')
+    fill('#fields [name=opening]', '3000')
+    element('#form .primary').click()
+    wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'#modal[open]')))
+    element('button[data-id="n00"]').click()
+    Select(element('#fields [name=tank]')).select_by_visible_text('Reserve petrol')
+    element('#form .primary').click()
+    wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'#modal[open]')))
+    element('[data-page="0"]').click()
+    assert '3,000 L' in element('.tanks').text
+    element('#add').click()
+    element('dialog[open] button.wide').click()
+    Select(element('dialog[open] [name=shift]')).select_by_value('Evening')
+    with TemporaryDirectory() as temp:
+        photo = Path(temp) / 'meter.png'
+        photo.write_bytes(base64.b64decode(image))
+        for i in range(4):
+            fill(f'[name=litres{i}]', '1000')
+            fill(f'[name=rate{i}]', '350')
+            element(f'[name=photo{i}]').send_keys(str(photo))
+        element('dialog[open] .primary').click()
+        element('button[data-close]').click()
+        for i in range(4):
+            fill(f'[name=litres{i}]', '750')
+            element(f'[name=photo{i}]').send_keys(str(photo))
+        element('dialog[open] .primary').click()
+        wait.until(lambda d: '2,750 L' in element('.tanks').text)
+    assert len(driver.find_elements(By.CSS_SELECTOR,'[data-stage=closing]')) == 5
+    for period in ['Daily','Weekly','Monthly','Yearly']:
+        Select(element('#progressPeriod')).select_by_visible_text(period)
+        assert period+' progress report' in element('#progressReport').text
+        assert '1,250' in element('#progressReport').text
+    element('#printProgress').click()
+    assert 'Yearly progress report' in driver.execute_script("return document.querySelector('#reportFrame').contentDocument.body.innerText")
+    print("Verified tank stock and all-nozzle shift handover.")
     print("Verified admin setup, staff creation, role navigation, shift handover, persistence and photo retrieval.")
 finally:
     driver.quit()
     server.shutdown()
-
