@@ -234,6 +234,24 @@ try:
     wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'#modal[open]')))
     element('[data-page="0"]').click()
     assert '2,000 L' in element('.tanks').text
+    element('[data-page="8"]').click()
+    operator = wait.until(lambda d: next((row for row in d.find_elements(By.CSS_SELECTOR,'tbody tr') if 'Test operator' in row.text), False))
+    operator.find_element(By.CSS_SELECTOR,'[data-work]').click()
+    for period in ['Daily','Weekly','Monthly','Yearly']:
+        Select(element('.work-record [name=period]')).select_by_visible_text(period)
+        records = driver.find_elements(By.CSS_SELECTOR,'.work-record tbody tr')
+        assert len(records) == 1
+        assert '350,000' in records[0].text
+        headings = element('.work-record thead').text
+        assert all(name in headings for name in ['Petrol A','Petrol B','Diesel A','Diesel B'])
+        assert len(records[0].find_elements(By.CSS_SELECTOR,'dl.nozzle-values')) == 4
+    element('.work-record [data-print]').click()
+    printed = driver.execute_script("return document.querySelector('.work-record iframe').contentDocument.body.innerText")
+    assert all(v in printed for v in ('Yearly','Diesel B','Total sales PKR','350,000'))
+    driver.execute_script("arguments[0].value='2000-01-01';arguments[0].dispatchEvent(new Event('change',{bubbles:true}))",element('.work-record [name=anchor]'))
+    assert 'No shifts recorded' in element('.work-record [data-results]').text
+    Select(element('.work-record [name=period]')).select_by_visible_text('All dates')
+    assert '350,000' in element('.work-record tbody').text
     print("Verified tank stock and all-nozzle shift handover.")
     print("Verified admin setup, staff creation, role navigation, shift handover, persistence and photo retrieval.")
 finally:
