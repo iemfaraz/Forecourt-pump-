@@ -124,18 +124,36 @@ const DeviceStation=(()=>{
         state.rows=b.rows;
       }else{
         assert(path==='/start'||path==='/close','Unknown operation.');
-        assert(/^data:image\/jpeg;base64,/.test(b.photo),'Attach the meter photo.');
-        const raw=atob(b.photo.slice(23)),photo=new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:'image/jpeg'});
+        const entries=b.entries||[b],opening=path==='/start';
+        const batchId=opening&&b.entries?crypto.randomUUID():null;
+        assert(Array.isArray(entries)&&entries.length,'Include a reading for each nozzle.');
+        if(opening&&b.entries){
+          const active=state.rows.filter(n=>n.type==='Nozzle'&&n.status==='Active');
+          assert(active.length===entries.length&&active.every(n=>entries.some(e=>e.nozzle===n.id)),'The active nozzle list changed. Reopen the shift form.');
+        }
+        if(!opening){
+          const first=state.rows.find(r=>r.id===entries[0].id);
+          if(first?.batchId||b.entries){
+            const members=state.rows.filter(r=>r.batchId&&r.batchId===first?.batchId&&r.close==='');
+            assert(members.length===entries.length&&members.every(r=>entries.some(e=>e.id===r.id)),'Close every nozzle in this shift together.');
+          }
+        }
+        for(const item of entries){
+          const entry=b.entries&&opening?{...item,date:b.date,shift:b.shift,startTime:b.startTime}:item;
+        assert(/^data:image\/jpeg;base64,/.test(entry.photo),'Attach the meter photo.');
+        const raw=atob(entry.photo.slice(23)),photo=new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:'image/jpeg'});
         let r,stage;if(path==='/start'){
-          const n=state.rows.find(x=>x.id===b.nozzle&&x.type==='Nozzle'&&x.status==='Active');assert(n,'Select an active nozzle.');
-          assert(/^([01]\d|2[0-3]):[0-5]\d$/.test(b.startTime),'Enter a valid shift start time.');
-          r={id:crypto.randomUUID(),startTime:b.startTime,type:'Reading',readingMode:'remaining',owner:current.id,person:current.name,fuel:n.fuel,nozzle:n.id,date:b.date,shift:b.shift,open:b.open,close:'',rate:b.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
+          const n=state.rows.find(x=>x.id===entry.nozzle&&x.type==='Nozzle'&&x.status==='Active');assert(n,'Select an active nozzle.');
+          assert(/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.startTime),'Enter a valid shift start time.');
+          r={id:crypto.randomUUID(),batchId,tank:n.tank||defaultTank(n.fuel),startTime:entry.startTime,type:'Reading',readingMode:'remaining',owner:current.id,person:current.name,fuel:n.fuel,nozzle:n.id,date:entry.date,shift:entry.shift,open:entry.open,close:'',rate:entry.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
           state.rows.push(r);stage='opening';
         }else{
-          r=state.rows.find(x=>x.id===b.id&&x.type==='Reading'&&x.owner);
-          assert(r&&(lead||r.owner===current.id)&&r.close==='','This shift cannot be closed.');if(!r.readingMode&&b.readingMode==='remaining')r.readingMode='remaining';Object.assign(r,{close:b.close,returned:r.readingMode==='remaining'?0:b.returned,ended:new Date().toISOString(),closedBy:current.name});stage='closing'
+          r=state.rows.find(x=>x.id===entry.id&&x.type==='Reading'&&x.owner);
+          assert(r&&(lead||r.owner===current.id)&&r.close==='','This shift cannot be closed.');if(!r.readingMode&&entry.readingMode==='remaining')r.readingMode='remaining';Object.assign(r,{close:entry.close,returned:r.readingMode==='remaining'?0:entry.returned,ended:new Date().toISOString(),closedBy:current.name});stage='closing'
         }
-        validate(state.rows);s('photos').add(photo,r.id+'/'+stage)
+        s('photos').add(photo,r.id+'/'+stage)
+        }
+        validate(state.rows);
       }
       state.revision++;s('ledger').put(state,'station')
     })
@@ -155,4 +173,3 @@ const DeviceStation=(()=>{
   }
   return {empty,setup,register,login,api,backup,restore,recover}
 })();
-
