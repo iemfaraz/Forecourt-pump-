@@ -56,6 +56,7 @@ try:
         image = driver.execute_script("const c=document.createElement('canvas'); c.getContext('2d').fillText('123456 L',5,20);return c.toDataURL().split(',')[1]")
         photo.write_bytes(base64.b64decode(image))
         element('#add').click()
+        driver.execute_script("arguments[0].value='22:30'", element('dialog[open] [name=startTime]'))
         fill('dialog[open] [name=open]', '1000')
         fill('dialog[open] [name=rate]', '350')
         element('dialog[open] [name=photo]').send_keys(str(photo))
@@ -73,6 +74,11 @@ try:
         assert '87,500' in element('#view table tbody').text
         element('[data-work]').click()
         assert '87,500' in element('.work-record tbody').text
+        assert '22:30' in element('.work-record tbody').text
+        element('.work-record [data-print]').click()
+        printed = driver.execute_script("return document.querySelector('.work-record iframe').contentDocument.body.innerText")
+        assert all(v in printed for v in ('Test clerk','test-clerk','22:30','87,500','250'))
+        assert 'Meter photos' not in printed
         element('.work-record [data-dismiss]').click()
     assert driver.execute_script("return net({open:100,close:140,returned:2})") == 38
     driver.refresh()
