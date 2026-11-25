@@ -33,7 +33,7 @@ async function lock(){
       }catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
   }catch{access.textContent='Browser storage is unavailable. Open this page in a normal browser window with site data enabled.'}
 }
-async function refresh(first=false){let s=await api('/state');staffUser=s.user;version=s.revision;rows=s.rows;if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Saved on this station computer';render()}
+async function refresh(first=false){let s=await api('/state');staffUser=s.user;version=s.revision;rows=s.rows;if(!isSales())accountList=await api('/users');if(first)progressOwner='';if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Saved on this station computer';render()}
 async function staffSave(next){await api('/ledger',{revision:version,rows:next});await refresh()}
 $('account').onclick=async()=>{await api('/logout',{});await lock()};
 function shiftControls(r){let photo=stage=>'<button data-photo="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';return photo('opening')+(r.close===''?'<button data-close="'+E(r.id)+'">Close shift</button>':photo('closing'))}
@@ -155,7 +155,7 @@ function accountAction(id,reset){
   });
   if(!reset){const f=d.querySelector('form');f.elements.name.value=user.name;f.elements.role.value=user.role;f.elements.status.value=user.pending||user.active?'Active':'Disabled'}
 }
-$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.photo)await showWorkPhoto(el.dataset.photo,el.dataset.stage);if(el.dataset.work)await workRecord(el.dataset.work);if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
+$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.workphoto)await showWorkPhoto(el.dataset.workphoto,el.dataset.stage);if(el.dataset.photo)await showWorkPhoto(el.dataset.photo,el.dataset.stage);if(el.dataset.work)await workRecord(el.dataset.work);if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
 lock();
 
 document.addEventListener('visibilitychange',()=>{if(staffUser&&!document.hidden&&!document.querySelector('dialog[open]'))refresh().catch(err=>console.warn(err.message))});
@@ -184,15 +184,10 @@ async function workRecord(id){
   d.innerHTML='<div class="head"><div><h2>'+E(person.name)+' · Work record</h2><small>'+E(person.login)+' · '+E(person.role)+'</small></div><div><button class="btn" data-print>Print record</button> <button class="btn" data-dismiss>Close</button></div></div>'+
     '<div class="work-filters"><label>Period<select name="period"><option>Daily</option><option>Weekly</option><option>Monthly</option><option>Yearly</option><option>Custom</option><option>All dates</option></select></label><label data-anchor>Date in period<input type="date" name="anchor"></label><label data-range>From<input type="date" name="from"></label><label data-range>Through<input type="date" name="through"></label><label>Shift status<select name="status"><option value="">All shifts</option><option>Open</option><option>Closed</option></select></label><span data-dates></span></div><div data-results></div>';
   const first=d.querySelector('[name=from]'),last=d.querySelector('[name=through]'),status=d.querySelector('[name=status]'),results=d.querySelector('[data-results]');
-  const when=t=>t?E(new Date(t).toLocaleString()):'—';
+
   const period=d.querySelector('[name=period]'),anchor=d.querySelector('[name=anchor]');
   anchor.value=date()||new Date().toLocaleDateString('en-CA');
-  function nozzleCell(r){
-    const done=r.close!=='';
-    const photo=stage=>'<button data-workphoto="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';
-    const lines=[['Fuel',E(r.fuel)],['Opening L',fmt(r.open)],['Closing L',done?fmt(r.close):'—'],['Returns L',fmt(r.returned||0)],['Sold L',done?fmt(net(r)):'—'],['PKR/L',fmt(r.rate)],['Sales PKR',done?fmt(net(r)*r.rate):'—'],['Closed at',when(r.ended)],['Closed by',E(r.closedBy||'—')]];
-    return '<dl class="nozzle-values">'+lines.map(([k,v])=>'<dt>'+k+'</dt><dd>'+v+'</dd>').join('')+'</dl>'+photo('opening')+(done?photo('closing'):'')
-  }
+
   function display(){
     const custom=period.value==='Custom',preset=!custom&&period.value!=='All dates';
     d.querySelector('[data-anchor]').hidden=!preset;
