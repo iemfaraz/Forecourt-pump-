@@ -203,6 +203,20 @@ try:
         Select(element('#progressPeriod')).select_by_visible_text(period)
         assert period+' progress report' in element('#progressReport').text
         assert '1,250' in element('#progressReport').text
+    Select(element('#progressOwner')).select_by_visible_text('Test operator (admin)')
+    for period in ['Daily','Weekly','Monthly','Yearly']:
+        Select(element('#progressPeriod')).select_by_visible_text(period)
+        group_rows=driver.find_elements(By.CSS_SELECTOR,'#progressReport tbody tr')
+        assert len(group_rows)==1
+        assert len(group_rows[0].find_elements(By.CSS_SELECTOR,'dl.nozzle-values'))==4
+        assert '350,000' in group_rows[0].text and 'Test clerk' not in group_rows[0].text
+    element('#progressReport [data-workphoto][data-stage=closing]').click()
+    wait.until(lambda d: d.execute_script("return document.querySelector('dialog[open] img')?.naturalWidth>0"))
+    element('dialog[open] button').click()
+    element('#printProgress').click()
+    printed=driver.execute_script("return document.querySelector('#reportFrame').contentDocument.body.innerText")
+    assert all(v in printed for v in ('Test operator','Petrol A','Diesel B','350,000'))
+    Select(element('#progressOwner')).select_by_value('')
     element('#printProgress').click()
     assert 'Yearly progress report' in driver.execute_script("return document.querySelector('#reportFrame').contentDocument.body.innerText")
     element('#addFuel').click()
