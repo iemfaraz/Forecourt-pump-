@@ -22,14 +22,61 @@ const DeviceStation=(()=>{
     const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
     return hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:600000},material,256))
   }
-  const visible=({id,name,role,login})=>({id,name,role,login});
+  const visible=({id,name,role,login,active=true,generation=0})=>({id,name,role,login,active,generation});  async function credentials(password){
+    assert(typeof password==='string'&&password.length>=12&&password.length<=128,'Use a password between 12 and 128 characters.');
+    const salt=hex(crypto.getRandomValues(new Uint8Array(16)));
+    return {salt,hash:await passwordHash(password,salt)}
+  }
+  const session=(u)=>({...visible(u),generation:u.generation||0});
+  async function verify(s){
+    const u=current&&await result(s('users').get(current.login));
+    if(!u||u.active===false||u.id!==current.id||(u.generation||0)!==current.generation){
+      current=null;throw Object.assign(Error('Your account changed. Sign in again.'),{expired:true})
+    }
+    return u
+  }
+  async function manage(b){
+    const replacement=b.action==='password'?await credentials(b.password):null;
+    return transaction(['users'],'readwrite',async s=>{
+      const actor=await verify(s),store=s('users'),target=await result(store.get(username(b.login)));
+      assert(target&&target.id===b.id,'Account unavailable. Refresh the user list.');
+      assert(actor.role==='admin'||(actor.role==='manager'&&target.role==='salesperson'),'You cannot manage this account.');
+      assert((target.generation||0)===b.generation,'The account changed. Refresh the user list.');
+      if(replacement)Object.assign(target,replacement);
+      else {
+        assert(b.action==='edit','Unknown account action.');
+        const name=String(b.name||'').trim();
+        assert(name&&name.length<=100,'Enter a full name of up to 100 characters.');
+        assert(['admin','manager','salesperson'].includes(b.role)&&typeof b.active==='boolean','Select a valid role and status.');
+        assert(actor.role==='admin'||b.role==='salesperson','Managers may manage salesperson profiles only.');
+        if(actor.id===target.id)assert(b.active&&b.role===actor.role,'Keep your own role and account active.');
+        Object.assign(target,{name,role:b.role,active:b.active});
+      }
+      target.generation=(target.generation||0)+1;
+      store.put(target,target.login);
+      return {user:visible(target),self:actor.id===target.id,profile:session(target)}
+    }).then(change=>{if(change.self)current=change.profile;return change.user})
+  }
+  async function recover(b){
+    const replacement=await credentials(b.password);
+    const response=await fetch('https://api.github.com/user',{headers:{Authorization:'Bearer '+b.proof.trim(),Accept:'application/vnd.github+json'},credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error'});
+    assert(response.ok,'GitHub could not verify the owner token. Check the token and try again.');
+    assert((await response.json()).id===328499199,'Only the repository owner can recover station administrators.');
+    const account=await transaction(['users'],'readwrite',async s=>{
+      const store=s('users'),admins=(await result(store.getAll())).filter(u=>u.role==='admin'&&u.active!==false);
+      const u=b.login.trim()?admins.find(a=>a.login===username(b.login)):admins.length===1?admins[0]:null;
+      assert(u,'Choose an active administrator username: '+admins.map(a=>a.login).join(', '));
+      Object.assign(u,replacement,{generation:(u.generation||0)+1});
+      store.put(u,u.login);return u.login
+    });
+    current=null;return account
+  }
+
   async function makeUser(b,role){
     const login=username(b.login),name=b.name.trim();
     assert(/^[a-z0-9._-]{3,60}$/.test(login),'Use 3–60 letters, numbers, dots, underscores or hyphens for the username.');
     assert(name&&name.length<=100,'Enter a name of up to 100 characters.');
-    assert(typeof b.password==='string'&&b.password.length>=12&&b.password.length<=128,'Use a password between 12 and 128 characters.');
-    const salt=hex(crypto.getRandomValues(new Uint8Array(16)));
-    return {id:crypto.randomUUID(),login,name,role,salt,hash:await passwordHash(b.password,salt)}
+    return {id:crypto.randomUUID(),login,name,role,active:true,generation:0,...await credentials(b.password)}
   }
   const empty=()=>transaction(['users'],'readonly',s=>result(s('users').count()).then(n=>n===0));
   async function setup(b){
@@ -42,18 +89,19 @@ const DeviceStation=(()=>{
   async function login(b){
     const user=await transaction(['users'],'readonly',s=>result(s('users').get(username(b.login))));
     const h=await passwordHash(b.password,user?.salt||'unknown');
-    assert(user&&user.hash===h,'Incorrect username or password.');current=visible(user)
+    assert(user&&user.active!==false&&user.hash===h,'Incorrect username or password.');current=visible(user)
   }
   async function api(path,b){
     if(path==='/logout'){current=null;return}
-    assert(current,'Please sign in.');const lead=current.role!=='salesperson';
+    assert(current,'Please sign in.');if(path==='/account')return manage(b);
+    const lead=current.role!=='salesperson';
     if(path==='/users'){assert(lead,'Manager access required.');
       if(b){assert(b.role==='salesperson'||(current.role==='admin'&&['manager','admin'].includes(b.role)),'Role unavailable.');const user=await makeUser(b,b.role);
-        await transaction(['users'],'readwrite',async s=>{assert(!await result(s('users').get(user.login)),'Username already exists.');s('users').add(user,user.login)})}
-      return transaction(['users'],'readonly',async s=>(await result(s('users').getAll())).map(visible))}
+        await transaction(['users'],'readwrite',async s=>{await verify(s);assert(!await result(s('users').get(user.login)),'Username already exists.');s('users').add(user,user.login)})}
+      return transaction(['users'],'readonly',async s=>{await verify(s);return (await result(s('users').getAll())).map(visible)})}
     const write=b!==undefined;
-    return transaction(['ledger','photos'],write?'readwrite':'readonly',async s=>{
-      const state=await result(s('ledger').get('station'));
+    return transaction(stores,write?'readwrite':'readonly',async s=>{
+      await verify(s);const state=await result(s('ledger').get('station'));
       assert(state,'Set up this station first.');
       if(path==='/state')return {revision:state.revision,user:current,rows:lead?state.rows:state.rows.filter(r=>r.type==='Nozzle'||r.owner===current.id).map(({cost,...r})=>r)};
       if(path.startsWith('/photo/')){const [, ,id,stage]=path.split('/'),r=state.rows.find(x=>x.id===id);
@@ -83,16 +131,17 @@ const DeviceStation=(()=>{
   }
   async function backup(){
     assert(current?.role==='admin','Administrator access required.');
-    const data=await transaction(stores,'readonly',async s=>({users:await result(s('users').getAll()),ledger:await result(s('ledger').get('station')),keys:await result(s('photos').getAllKeys()),blobs:await result(s('photos').getAll())}));
+    const data=await transaction(stores,'readonly',async s=>{await verify(s);return {users:await result(s('users').getAll()),ledger:await result(s('ledger').get('station')),keys:await result(s('photos').getAllKeys()),blobs:await result(s('photos').getAll())}});
     const photos=await Promise.all(data.blobs.map((blob,i)=>new Promise((resolve,reject)=>{const f=new FileReader;f.onload=()=>resolve([data.keys[i],f.result]);f.onerror=reject;f.readAsDataURL(blob)})));
     return {format:'forecourt-device-1',users:data.users,rows:data.ledger.rows,photos}
   }
   async function restore(b){
     assert(current?.role==='admin','Administrator access required.');assert(b.format==='forecourt-device-1'&&Array.isArray(b.users)&&Array.isArray(b.photos),'Select a full station backup.');validate(b.rows);
-    assert(b.users.some(u=>u.role==='admin')&&b.users.every(u=>typeof u.id==='string'&&typeof u.login==='string'&&['admin','manager','salesperson'].includes(u.role)&&/^[a-f0-9]{64}$/.test(u.hash)&&/^[a-f0-9]{32}$/.test(u.salt)),'Invalid account backup.');
+    assert(b.users.some(u=>u.role==='admin'&&u.active!==false)&&b.users.every(u=>typeof u.id==='string'&&typeof u.login==='string'&&['admin','manager','salesperson'].includes(u.role)&&/^[a-f0-9]{64}$/.test(u.hash)&&/^[a-f0-9]{32}$/.test(u.salt)),'Invalid account backup.');
     const photos=new Map(b.photos.map(([k,v])=>{assert(typeof k==='string'&&v.startsWith('data:image/jpeg;base64,'),'Invalid photo backup.');return [k,new Blob([Uint8Array.from(atob(v.slice(23)),c=>c.charCodeAt(0))],{type:'image/jpeg'})]}));
     for(const r of b.rows.filter(r=>r.owner))assert(b.users.some(u=>u.id===r.owner)&&photos.has(r.id+'/opening')&&(r.close===''||photos.has(r.id+'/closing')),'Backup is missing staff or photos.');
-    await transaction(stores,'readwrite',async s=>{const old=await result(s('ledger').get('station'));for(const n of stores)s(n).clear();for(const u of b.users)s('users').add(u,u.login);for(const [k,v] of photos)s('photos').add(v,k);s('ledger').put({revision:old.revision+1,rows:b.rows},'station')});current=null
+    await transaction(stores,'readwrite',async s=>{await verify(s);const old=await result(s('ledger').get('station'));for(const n of stores)s(n).clear();for(const u of b.users)s('users').add(u,u.login);for(const [k,v] of photos)s('photos').add(v,k);s('ledger').put({revision:old.revision+1,rows:b.rows},'station')});current=null
   }
-  return {empty,setup,login,api,backup,restore}
+  return {empty,setup,login,api,backup,restore,recover}
 })();
+
