@@ -182,20 +182,48 @@ async function workRecord(id){
   const labels=new Map(state.rows.filter(r=>r.type==='Nozzle').map(n=>[n.id,n.name]));
   const d=document.createElement('dialog');d.className='work-record';
   d.innerHTML='<div class="head"><div><h2>'+E(person.name)+' · Work record</h2><small>'+E(person.login)+' · '+E(person.role)+'</small></div><div><button class="btn" data-print>Print record</button> <button class="btn" data-dismiss>Close</button></div></div>'+
-    '<div class="work-filters"><label>From<input type="date" name="from"></label><label>Through<input type="date" name="through"></label><label>Shift status<select name="status"><option value="">All shifts</option><option>Open</option><option>Closed</option></select></label><button class="btn" data-clear>All dates</button></div><div data-results></div>';
+    '<div class="work-filters"><label>Period<select name="period"><option>Daily</option><option>Weekly</option><option>Monthly</option><option>Yearly</option><option>Custom</option><option>All dates</option></select></label><label data-anchor>Date in period<input type="date" name="anchor"></label><label data-range>From<input type="date" name="from"></label><label data-range>Through<input type="date" name="through"></label><label>Shift status<select name="status"><option value="">All shifts</option><option>Open</option><option>Closed</option></select></label><span data-dates></span></div><div data-results></div>';
   const first=d.querySelector('[name=from]'),last=d.querySelector('[name=through]'),status=d.querySelector('[name=status]'),results=d.querySelector('[data-results]');
   const when=t=>t?E(new Date(t).toLocaleString()):'—';
+  const period=d.querySelector('[name=period]'),anchor=d.querySelector('[name=anchor]');
+  anchor.value=date()||new Date().toLocaleDateString('en-CA');
+  function nozzleCell(r){
+    const done=r.close!=='';
+    const photo=stage=>'<button data-workphoto="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';
+    const lines=[['Fuel',E(r.fuel)],['Opening L',fmt(r.open)],['Closing L',done?fmt(r.close):'—'],['Returns L',fmt(r.returned||0)],['Sold L',done?fmt(net(r)):'—'],['PKR/L',fmt(r.rate)],['Sales PKR',done?fmt(net(r)*r.rate):'—'],['Closed at',when(r.ended)],['Closed by',E(r.closedBy||'—')]];
+    return '<dl class="nozzle-values">'+lines.map(([k,v])=>'<dt>'+k+'</dt><dd>'+v+'</dd>').join('')+'</dl>'+photo('opening')+(done?photo('closing'):'')
+  }
   function display(){
-    const invalid=Boolean(first.value&&last.value&&first.value>last.value);
-    d.querySelector('[data-print]').disabled=invalid;
-    if(invalid){results.textContent='Choose an end date on or after the start date.';return}
-    const filtered=shifts.filter(r=>(!first.value||r.date>=first.value)&&(!last.value||r.date<=last.value)&&(!status.value||(r.close===''?'Open':'Closed')===status.value));
-    const closed=filtered.filter(r=>r.close!=='');
-    const list=filtered.map(r=>{const done=r.close!=='',photo=stage=>'<button data-workphoto="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening':'Closing')+'</button>';
-      return [E(r.date),E(r.shift),E(labels.get(r.nozzle)||r.nozzle),E(r.fuel),done?'Closed':'Open',fmt(r.open),done?fmt(r.close):'—',done?fmt(net(r)):'—',fmt(r.rate),done?fmt(net(r)*r.rate):'—',E(shiftTime(r)),when(r.ended),E(r.closedBy||'—'),photo('opening')+(done?photo('closing'):'')]
+    const custom=period.value==='Custom',preset=!custom&&period.value!=='All dates';
+    d.querySelector('[data-anchor]').hidden=!preset;
+    d.querySelectorAll('[data-range]').forEach(label=>label.hidden=!custom);
+    if(preset&&anchor.value)[first.value,last.value]=progressDates(anchor.value,period.value);
+    if(!custom&&!preset){first.value='';last.value=''}
+    const invalid=(preset&&!anchor.value)||(first.value&&last.value&&first.value>last.value);
+    d.querySelector('[data-print]').disabled=Boolean(invalid);
+    d.querySelector('[data-dates]').textContent=invalid?'':(first.value||'Earliest date')+' – '+(last.value||'Latest date');
+    if(invalid){results.textContent=preset?'Select a date for this period.':'Choose an end date on or after the start date.';return}
+    const grouped=new Map();
+    for(const r of shifts){
+      if((first.value&&r.date<first.value)||(last.value&&r.date>last.value))continue;
+      const key=shiftGroupKey(r);
+      if(!grouped.has(key))grouped.set(key,[]);
+      grouped.get(key).push(r)
+    }
+    const shiftStatus=members=>members.some(r=>r.close==='')?'Open':'Closed';
+    const groups=Array.from(grouped.values()).filter(g=>!status.value||shiftStatus(g)===status.value);
+    const filtered=groups.flat(),closed=filtered.filter(r=>r.close!=='');
+    const used=new Set(filtered.map(r=>r.nozzle));
+    const nozzles=Array.from(new Set([...state.rows.filter(r=>r.type==='Nozzle'&&(r.status==='Active'||used.has(r.id))).map(r=>r.id),...used]));
+    const list=groups.map(members=>{
+      const r=members[0],finished=members.filter(n=>n.close!=='');
+      return [E(r.date),E(r.shift),E(shiftTime(r)),shiftStatus(members),...nozzles.map(id=>{
+        const records=members.filter(n=>n.nozzle===id);
+        return records.length?records.map(nozzleCell).join('<hr>'):'—'
+      }),fmt(sum(finished,net)),fmt(sum(finished,n=>net(n)*n.rate))]
     });
-    results.innerHTML='<div class="cards">'+card('Shifts',fmt(new Set(filtered.map(r=>r.batchId||r.id)).size))+card('Open shifts',fmt(new Set(filtered.filter(r=>r.close==='').map(r=>r.batchId||r.id)).size))+card('Litres sold',fmt(sum(closed,net)))+card('Sales · PKR',fmt(sum(closed,r=>net(r)*r.rate)))+'</div>'+
-      table(['Date','Shift','Nozzle','Fuel','Status','Opening L','Closing L','Sold L','PKR/L','Sales PKR','Start time','Closed at','Closed by','Meter photos'],list,'No shifts recorded for this account in this period.')
+    results.innerHTML='<div class="cards">'+card('Shifts',fmt(groups.length))+card('Open shifts',fmt(groups.filter(g=>shiftStatus(g)==='Open').length))+card('Litres sold',fmt(sum(closed,net)))+card('Sales · PKR',fmt(sum(closed,r=>net(r)*r.rate)))+'</div>'+
+      table(['Date','Shift','Start time','Status',...nozzles.map(id=>labels.get(id)||id),'Total sold L','Total sales PKR'],list,'No shifts recorded for this account in this period.')
   }
   d.onchange=display;d.onclick=async e=>{const el=e.target;
     if(el.hasAttribute('data-print')){
@@ -207,19 +235,18 @@ async function workRecord(id){
       const doc=frame.contentDocument;
       doc.title=person.name+' · Work record';
       const css=doc.createElement('style');
-      css.textContent='@page{size:A4 landscape;margin:10mm}body{font:10pt Arial,sans-serif;color:#17212b}h1{font-size:18pt}table{width:100%;border-collapse:collapse;font-size:8pt}th,td{text-align:left;border:1px solid #aaa;padding:4px;overflow-wrap:anywhere}thead{display:table-header-group}tr{break-inside:avoid}.cards{display:flex;gap:2em;margin:1em 0}.cards>*{display:grid;gap:4px}';
+      css.textContent='@page{size:A4 landscape;margin:10mm}dl{margin:0}dt{color:#555}dd{margin:0 0 3px}td{vertical-align:top}body{font:10pt Arial,sans-serif;color:#17212b}h1{font-size:18pt}table{width:100%;border-collapse:collapse;font-size:8pt}th,td{text-align:left;border:1px solid #aaa;padding:4px;overflow-wrap:anywhere}thead{display:table-header-group}tr{break-inside:avoid}.cards{display:flex;gap:2em;margin:1em 0}.cards>*{display:grid;gap:4px}';
       doc.head.append(css);
       const heading=doc.createElement('h1'),info=doc.createElement('p');
       heading.textContent=doc.title;
-      info.textContent=[person.login,person.role,'From '+(first.value||'earliest date'),'Through '+(last.value||'latest date'),status.value||'All shifts'].join(' · ');
+      info.textContent=[person.login,person.role,period.value,'From '+(first.value||'earliest date'),'Through '+(last.value||'latest date'),status.value||'All shifts'].join(' · ');
       const copy=results.cloneNode(true);
-      copy.querySelectorAll('tr').forEach(row=>row.lastElementChild?.remove());
+      copy.querySelectorAll('button').forEach(button=>button.remove());
       doc.body.append(heading,info,copy);
       frame.contentWindow.focus();
       frame.contentWindow.print();
     }
     if(el.hasAttribute('data-dismiss'))d.close();
-    if(el.hasAttribute('data-clear')){first.value='';last.value='';status.value='';display()}
     if(el.dataset.workphoto)try{await showWorkPhoto(el.dataset.workphoto,el.dataset.stage)}catch(err){alert(err.message)}
   };
   d.onclose=()=>d.remove();document.body.append(d);display();d.showModal()
