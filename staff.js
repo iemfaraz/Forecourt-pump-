@@ -64,7 +64,8 @@ function batchShift(records){
     const info=closing?'<p>Opening reading: '+fmt(r.open)+' L</p>':input('Sale rate (PKR/L)','rate'+i,'number','min="0" step="any"');
     return '<fieldset class="wide"><legend>'+E(name)+' · '+E(r.fuel)+'</legend>'+info+meter+photoInput.replace('name="photo"','name="photo'+i+'"')+'</fieldset>'
   }).join('');
-  dialog(closing?'End shift · all nozzles':'Start shift · all nozzles',shared+sections,closing?'Save all closing readings':'Save all opening readings',async b=>{
+  const switchMode=closing?'':'<button type="button" class="btn wide" data-single>Use one nozzle</button>';
+  const form=dialog(closing?'End shift · all nozzles':'Start shift · all nozzles',switchMode+shared+sections,closing?'Save all closing readings':'Save all opening readings',async b=>{
     const entries=[];
     for(const [i,r] of items.entries()){
       const value=Number(b['litres'+i]),photo=await meterPhoto(b['photo'+i]);
@@ -72,12 +73,14 @@ function batchShift(records){
     }
     await api(closing?'/close':'/start',{date:b.date,shift:b.shift,startTime:b.startTime,entries});
     $('date').value=closing?items[0].date:b.date;await refresh()
-  })
+  });
+  if(!closing)form.querySelector("[data-single]").onclick=()=>{form.close();shiftForm(null,true)}
 }
-function shiftForm(r){
+function shiftForm(r,single=false){
   if(r?.batchId)return batchShift(get('Reading').filter(x=>x.batchId===r.batchId&&x.close===''));
   const active=get('Nozzle').filter(n=>n.status==='Active');
   if(!r&&!active.length)return alert('A manager must add an active nozzle first.');
+  if(!r&&!single)return batchShift();
   let html;
   if(r){
     html='<p class="wide">'+E(nozzleName(r.nozzle))+' · Start time: '+E(shiftTime(r))+' · Opening reading: '+fmt(r.open)+' L</p>';
