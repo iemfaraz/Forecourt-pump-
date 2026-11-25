@@ -72,6 +72,13 @@ try:
     sign_in('new-attendant', password)
     assert len(driver.find_elements(By.CSS_SELECTOR,'nav button')) == 1
     element('#account').click()
+    wait.until(lambda d: d.execute_script('return !!navigator.serviceWorker.controller'))
+    driver.execute_cdp_cmd('Network.enable', {})
+    driver.execute_cdp_cmd('Network.emulateNetworkConditions', {'offline':True,'latency':0,'downloadThroughput':0,'uploadThroughput':0})
+    server.shutdown()
+    server.server_close()
+    driver.get(f"http://127.0.0.1:{server.server_port}/?release=offline")
+    assert 'Working offline' in element('#offlineStatus').text
     sign_in('test-clerk', password)
     assert len(driver.find_elements(By.CSS_SELECTOR,'nav button')) == 1
     with TemporaryDirectory() as temp:
@@ -183,7 +190,15 @@ try:
             element(f'[name=photo{i}]').send_keys(str(photo))
         element('dialog[open] .primary').click()
         wait.until(lambda d: '2,750 L' in element('.tanks').text)
+    element('[data-page="1"]').click()
+    assert len(driver.find_elements(By.CSS_SELECTOR,'#view section > .scroll > table > tbody > tr')) == 2
+    group = element('[data-shift-details]').find_element(By.XPATH, '../..')
+    assert all(value in group.text for value in ('Evening','4 nozzles','1,000','350,000'))
+    element('[data-shift-details]').click()
     assert len(driver.find_elements(By.CSS_SELECTOR,'[data-stage=closing]')) == 5
+    element('[data-shift-details]').click()
+    assert len(driver.find_elements(By.CSS_SELECTOR,'[data-stage=closing]')) == 1
+    element('[data-page="0"]').click()
     for period in ['Daily','Weekly','Monthly','Yearly']:
         Select(element('#progressPeriod')).select_by_visible_text(period)
         assert period+' progress report' in element('#progressReport').text
