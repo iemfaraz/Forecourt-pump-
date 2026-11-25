@@ -5,6 +5,7 @@ const isSales=()=>staffUser?.role==='salesperson';
 const main=document.querySelector('main'), access=$('access');
 async function api(path,data){try{return await DeviceStation.api(path,data)}catch(err){if(err.expired){document.querySelectorAll('dialog[open]').forEach(d=>d.close());await lock()}throw err}}
 async function lock(){
+  document.getElementById('reportFrame')?.remove();
   staffUser=null;rows=[];accountList=[];$('view').replaceChildren();$('nav').replaceChildren();$('modal').close();
   main.hidden=true;access.hidden=false;$('account').hidden=true;$('identity').textContent='Station access';
   access.textContent='Opening station records…';
