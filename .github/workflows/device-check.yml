@@ -1,7 +1,7 @@
 name: Check single-computer station
 on:
   push:
-    paths: ['device-store.js', 'staff.js', 'app.js', 'index.html', 'tests/device-smoke.py', '.github/workflows/device-check.yml']
+    paths: ['station-sw.js', 'device-store.js', 'staff.js', 'app.js', 'index.html', 'tests/device-smoke.py', '.github/workflows/device-check.yml']
 permissions:
   contents: read
 jobs:
