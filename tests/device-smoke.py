@@ -79,6 +79,8 @@ try:
         image = driver.execute_script("const c=document.createElement('canvas'); c.getContext('2d').fillText('123456 L',5,20);return c.toDataURL().split(',')[1]")
         photo.write_bytes(base64.b64decode(image))
         element('#add').click()
+        assert len(driver.find_elements(By.CSS_SELECTOR,'dialog[open] fieldset')) == 4
+        element('dialog[open] [data-single]').click()
         driver.execute_script("arguments[0].value='22:30'", element('dialog[open] [name=startTime]'))
         fill('dialog[open] [name=open]', '1000')
         fill('dialog[open] [name=rate]', '350')
@@ -165,7 +167,7 @@ try:
     element('[data-page="0"]').click()
     assert '3,000 L' in element('.tanks').text
     element('#add').click()
-    element('dialog[open] button.wide').click()
+    assert len(driver.find_elements(By.CSS_SELECTOR,'dialog[open] fieldset')) == 4
     Select(element('dialog[open] [name=shift]')).select_by_value('Evening')
     with TemporaryDirectory() as temp:
         photo = Path(temp) / 'meter.png'
