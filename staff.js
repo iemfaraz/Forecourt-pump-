@@ -42,8 +42,41 @@ function input(label,name,type='text',extra=''){return '<label>'+label+'<input n
 function choices(label,name,opts){return '<label>'+label+'<select name="'+name+'" required>'+opts.map(([id,n])=>'<option value="'+E(id)+'">'+E(n)+'</option>').join('')+'</select></label>'}
 function dialog(title,html,submit,action){let d=document.createElement('dialog');d.innerHTML='<form><div class="head"><h2>'+title+'</h2><button class="btn" type="button" data-cancel>Cancel</button></div><div class="grid">'+html+'</div><p class="err" role="alert"></p><button class="btn primary">'+submit+'</button></form>';document.body.append(d);d.onclose=()=>d.remove();d.querySelector('[data-cancel]').onclick=()=>d.close();d.querySelector('form').onsubmit=async e=>{e.preventDefault();let f=e.currentTarget,button=f.querySelector('.primary');button.disabled=true;try{await action(Object.fromEntries(new FormData(f)));d.close()}catch(err){f.querySelector('.err').textContent=err.message}finally{button.disabled=false}};d.showModal();return d}
 async function meterPhoto(file){if(!file?.size||file.size>25e6)throw Error('Choose a photo under 25 MB.');let url=URL.createObjectURL(file);try{let img=new Image;img.src=url;await img.decode();let scale=Math.min(1,1600/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));c.getContext('2d').drawImage(img,0,0,c.width,c.height);return c.toDataURL('image/jpeg',0.78)}finally{URL.revokeObjectURL(url)}}
-function shiftForm(r){let active=get('Nozzle').filter(n=>n.status==='Active');if(!r&&!active.length)return alert('A manager must add an active nozzle first.');let html=r?'<p>'+E(nozzleName(r.nozzle))+' · Opening '+fmt(r.open)+' L</p>'+input('Closing meter (L)','close','number','step="any" min="'+r.open+'"')+input('Returned to tank (L)','returned','number','step="any" min="0" value="0"'):choices('Nozzle','nozzle',active.map(n=>[n.id,n.name]))+input('Business date','date','date','value="'+date()+'"')+choices('Shift','shift',shifts.map(s=>[s,s]))+input('Opening meter (L)','open','number','min="0" step="any"')+input('Sale rate (PKR/L)','rate','number','min="0" step="any"');
-dialog(r?'Close shift':'Start shift',html+photoInput,r?'Save closing reading':'Save opening reading',async b=>{b.photo=await meterPhoto(b.photo);for(let k of ['close','open','rate','returned'])if(k in b)b[k]=Number(b[k]);if(r)b.id=r.id;await api(r?'/close':'/start',b);$('date').value=r?.date||b.date;await refresh()})}
+function shiftForm(r){
+  const active=get('Nozzle').filter(n=>n.status==='Active');
+  if(!r&&!active.length)return alert('A manager must add an active nozzle first.');
+  let html;
+  if(r){
+    html='<p class="wide">'+E(nozzleName(r.nozzle))+' · Opening reading: '+fmt(r.open)+' L</p>';
+    if(!r.readingMode)html+=choices('Reading used at shift start','readingMode',[['remaining','Litres remaining'],['meter','Legacy cumulative meter']]);
+    html+=input('Closing litres remaining','close','number','min="0" step="any" max="'+r.open+'"');
+    if(!r.readingMode)html+=input('Returned to tank (L)','returned','number','min="0" step="any" value="0"');
+    html+='<output class="wide" aria-live="polite"></output>';
+  }else{
+    html=choices('Nozzle','nozzle',active.map(n=>[n.id,n.name]))+input('Business date','date','date','value="'+date()+'"')+
+      choices('Shift','shift',shifts.map(s=>[s,s]))+input('Opening litres remaining','open','number','min="0" step="any"')+
+      input('Sale rate (PKR/L)','rate','number','min="0" step="any"')+
+      '<p class="wide">Record the fuel available at the start. If refilling, take the closing reading before the refill.</p>';
+  }
+  const d=dialog(r?'Close shift':'Start shift',html+photoInput,r?'Save closing reading':'Save opening reading',async b=>{
+    b.photo=await meterPhoto(b.photo);
+    for(const k of ['close','open','rate','returned'])if(k in b)b[k]=Number(b[k]);
+    if(r){b.id=r.id;b.readingMode=r.readingMode||b.readingMode}
+    await api(r?'/close':'/start',b);$('date').value=r?.date||b.date;await refresh()
+  });
+  if(!r)return;
+  const f=d.querySelector('form'),closing=f.elements.namedItem('close'),returned=f.elements.namedItem('returned');
+  function preview(){
+    const remaining=r.readingMode==='remaining'||f.elements.namedItem('readingMode')?.value==='remaining';
+    closing.parentElement.firstChild.textContent=remaining?'Closing litres remaining':'Closing cumulative meter (L)';
+    closing.min=remaining?0:r.open;
+    if(remaining)closing.max=r.open;else closing.removeAttribute('max');
+    if(returned){returned.disabled=remaining;returned.parentElement.hidden=remaining}
+    const sold=remaining?r.open-closing.valueAsNumber:closing.valueAsNumber-r.open-(returned?.valueAsNumber||0);
+    f.querySelector('output').textContent=closing.value===''?'':sold<0?'Check the closing reading.':'Fuel sold: '+fmt(sold)+' L · Sales: PKR '+fmt(sold*r.rate)
+  }
+  f.addEventListener('input',preview);preview()
+}
 function recoveryForm(){
   const html='<p class="wide">Recover a local administrator account on this station computer. Verify the repository owner (iemfaraz) with a GitHub token. The token is sent directly to GitHub for identity verification.</p><label class="wide">Administrator username (optional if there is only one)<input name="login" autocomplete="username"></label>'+input('Owner GitHub token','proof','password','autocomplete="off"')+passwordFields();
   dialog('Reset administrator password',html,'Reset password',async b=>{
