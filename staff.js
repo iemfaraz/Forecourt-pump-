@@ -3,7 +3,7 @@ let staffUser=null,version=0,token='',accountList=[];
 
 const isSales=()=>staffUser?.role==='salesperson';
 const main=document.querySelector('main'), access=$('access');
-const api=(path,data)=>DeviceStation.api(path,data);
+async function api(path,data){try{return await DeviceStation.api(path,data)}catch(err){if(err.expired){document.querySelectorAll('dialog[open]').forEach(d=>d.close());await lock()}throw err}}
 async function lock(){
   staffUser=null;rows=[];accountList=[];$('view').replaceChildren();$('nav').replaceChildren();$('modal').close();
   main.hidden=true;access.hidden=false;$('account').hidden=true;$('identity').textContent='Station access';
@@ -11,6 +11,11 @@ async function lock(){
   try{
     const first=await DeviceStation.empty();
     access.innerHTML='<h1 style="font-size:32px">'+(first?'Set up this station':'Staff sign-in')+'</h1><p>'+(first?'Create the administrator account for this browser on the station computer.':'Enter the username and password issued by your manager.')+'</p><form id="signin">'+(first?input('Administrator name','name','text','maxlength="100"'):'')+input('Username','login','text',first?'value="admin" autocomplete="username"':'autocomplete="username"')+input('Password','password','password',first?'minlength="12" maxlength="128" autocomplete="new-password"':'autocomplete="current-password"')+(first?input('Confirm password','confirm','password','autocomplete="new-password"'):'')+'<p class="err" role="alert"></p><button class="btn primary">'+(first?'Create administrator':'Sign in')+'</button></form><p><small>Accounts, readings and photos stay in this browser profile.</small></p>';
+    if(!first){
+      access.insertAdjacentHTML('beforeend','<button class="btn" id="recoverAdmin">Reset administrator password</button><p><small>Staff can ask an administrator or manager to reset their password.</small></p>');
+      $('recoverAdmin').onclick=recoveryForm;
+      if(location.hash==='#reset'){history.replaceState(null,'',location.pathname+location.search);recoveryForm()}
+    }
     $('signin').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button'),b=Object.fromEntries(new FormData(f));btn.disabled=true;
       try{if(first){if(b.password!==b.confirm)throw Error('The passwords must match.');await DeviceStation.setup(b)}else await DeviceStation.login(b);
         await refresh(true);access.replaceChildren()
@@ -21,7 +26,14 @@ async function refresh(first=false){let s=await api('/state');staffUser=s.user;v
 async function staffSave(next){await api('/ledger',{revision:version,rows:next});await refresh()}
 $('account').onclick=async()=>{await api('/logout',{});await lock()};
 function shiftControls(r){let photo=stage=>'<button data-photo="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';return photo('opening')+(r.close===''?'<button data-close="'+E(r.id)+'">Close shift</button>':photo('closing'))}
-function staffLayout(){if(isSales())$('nav').innerHTML='<button class="on" data-page="1">Nozzle shifts</button>';if(page<=1)$('add').textContent='＋ Start shift';
+function staffLayout(){
+  if(!isSales())$('nav').insertAdjacentHTML('beforeend','<button data-page="8" class="'+(page===8?'on':'')+'">Users &amp; passwords</button>');
+  if(page===8&&!isSales()){
+    $('title').textContent='Users & passwords';$('sub').textContent='Manage sign-in and access on this station computer.';$('date').hidden=true;
+    $('add').textContent='＋ Create account';$('view').textContent='Loading station accounts…';
+    drawAccounts().catch(err=>{if(page===8)$('view').textContent=err.message});return
+  }
+if(isSales())$('nav').innerHTML='<button class="on" data-page="1">Nozzle shifts</button>';if(page<=1)$('add').textContent='＋ Start shift';
 if(page===1){let active=get('Reading').filter(r=>r.owner&&r.close===''&&r.date!==date());if(active.length)$('view').insertAdjacentHTML('afterbegin',panel('Open shifts from other dates',readings(active)))}
 if(page===7&&!isSales())$('view').insertAdjacentHTML('afterbegin',panel('Staff accounts','<button class="btn primary" id="manage">Manage staff</button>')+(localStorage.getItem(key)?panel('Previous browser ledger','<button id="migrate" class="btn">Import records from this browser</button>'):''));
 if(page===7&&staffUser.role==='admin')$('view').insertAdjacentHTML('beforeend',panel('Full station backup','<p>Save accounts, ledger entries and meter photos together. Keep this file private.</p><div class="actions"><button class="btn" id="fullbackup">Download full backup</button><label class="btn">Restore full backup<input hidden type="file" id="fullrestore" accept=".json"></label></div>'))}
@@ -32,8 +44,46 @@ function dialog(title,html,submit,action){let d=document.createElement('dialog')
 async function meterPhoto(file){if(!file?.size||file.size>25e6)throw Error('Choose a photo under 25 MB.');let url=URL.createObjectURL(file);try{let img=new Image;img.src=url;await img.decode();let scale=Math.min(1,1600/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));c.getContext('2d').drawImage(img,0,0,c.width,c.height);return c.toDataURL('image/jpeg',0.78)}finally{URL.revokeObjectURL(url)}}
 function shiftForm(r){let active=get('Nozzle').filter(n=>n.status==='Active');if(!r&&!active.length)return alert('A manager must add an active nozzle first.');let html=r?'<p>'+E(nozzleName(r.nozzle))+' · Opening '+fmt(r.open)+' L</p>'+input('Closing meter (L)','close','number','step="any" min="'+r.open+'"')+input('Returned to tank (L)','returned','number','step="any" min="0" value="0"'):choices('Nozzle','nozzle',active.map(n=>[n.id,n.name]))+input('Business date','date','date','value="'+date()+'"')+choices('Shift','shift',shifts.map(s=>[s,s]))+input('Opening meter (L)','open','number','min="0" step="any"')+input('Sale rate (PKR/L)','rate','number','min="0" step="any"');
 dialog(r?'Close shift':'Start shift',html+photoInput,r?'Save closing reading':'Save opening reading',async b=>{b.photo=await meterPhoto(b.photo);for(let k of ['close','open','rate','returned'])if(k in b)b[k]=Number(b[k]);if(r)b.id=r.id;await api(r?'/close':'/start',b);$('date').value=r?.date||b.date;await refresh()})}
-async function staffAccounts(){accountList=await api('/users');let html='<div style="grid-column:1/-1">'+table(['Name','Username','Role'],accountList.map(a=>[E(a.name),E(a.login),E(a.role)]))+'</div>'+input('Full name','name')+input('Username','login','text','minlength="3" autocomplete="off"')+input('Password','password','password','minlength="12" maxlength="128" autocomplete="new-password"')+choices('Role','role',(staffUser.role==='admin'?['salesperson','manager','admin']:['salesperson']).map(v=>[v,v]));dialog('Staff accounts',html,'Create account',async b=>{await api('/users',b);alert('Account created for '+b.name+'.')})}
-$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.photo){let blob=await api('/photo/'+encodeURIComponent(el.dataset.photo)+'/'+el.dataset.stage,undefined,true),url=URL.createObjectURL(blob);let d=document.createElement('dialog');d.innerHTML='<button class="btn">Close</button><img style="display:block;max-width:100%" alt="Meter photo">';d.querySelector('img').src=url;d.querySelector('button').onclick=()=>d.close();d.onclose=()=>{URL.revokeObjectURL(url);d.remove()};document.body.append(d);d.showModal()}if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
+function recoveryForm(){
+  const html='<p class="wide">Recover a local administrator account on this station computer. Verify the repository owner (iemfaraz) with a GitHub token. The token is sent directly to GitHub for identity verification.</p><label class="wide">Administrator username (optional if there is only one)<input name="login" autocomplete="username"></label>'+input('Owner GitHub token','proof','password','autocomplete="off"')+passwordFields();
+  dialog('Reset administrator password',html,'Reset password',async b=>{
+    checkPasswords(b);const login=await DeviceStation.recover(b);await lock();
+    const f=$('signin');f.elements.login.value=login;
+    f.querySelector('.err').textContent='Password reset. Sign in with your new password.';
+    f.elements.password.focus()
+  })
+}
+function passwordFields(){return input('New password (12–128 characters)','password','password','minlength="12" maxlength="128" autocomplete="new-password"')+input('Confirm new password','confirm','password','minlength="12" maxlength="128" autocomplete="new-password"')}
+function checkPasswords(b){if(b.password!==b.confirm)throw Error('The new passwords must match.')}
+function staffAccounts(){page=8;render()}
+async function drawAccounts(){
+  const users=await api('/users');if(page!==8||!staffUser||isSales())return;
+  accountList=users.sort((a,b)=>a.name.localeCompare(b.name));
+  const items=accountList.map(u=>{
+    const allowed=staffUser.role==='admin'||u.role==='salesperson';
+    return [E(u.name),E(u.login),E(u.role),u.active?'Active':'Disabled',allowed?'<button data-edituser="'+E(u.id)+'">Edit</button> <button data-resetuser="'+E(u.id)+'">Reset password</button>':'']
+  });
+  $('view').innerHTML=panel('Station accounts',table(['Full name','Username','Role','Status','Actions'],items))
+}
+function newAccount(){
+  const roles=staffUser.role==='admin'?['salesperson','manager','admin']:['salesperson'];
+  const html=input('Full name','name','text','maxlength="100"')+input('Username','login','text','minlength="3" maxlength="60" autocomplete="off"')+choices('Role','role',roles.map(v=>[v,v]))+passwordFields();
+  dialog('Create staff account',html,'Create account',async b=>{checkPasswords(b);await api('/users',b);await drawAccounts()})
+}
+function accountAction(id,reset){
+  const user=accountList.find(u=>u.id===id);if(!user)return;
+  const self=user.id===staffUser.id;
+  const roles=staffUser.role==='admin'&&!self?['salesperson','manager','admin']:[user.role];
+  const fields=reset?passwordFields():input('Full name','name','text','maxlength="100"')+choices('Role','role',roles.map(v=>[v,v]))+choices('Status','status',(self?['Active']:['Active','Disabled']).map(v=>[v,v]));
+  const d=dialog(reset?'Reset staff password':'Edit staff account','<p class="wide">'+E(user.name)+' · '+E(user.login)+'</p>'+fields,reset?'Save new password':'Save changes',async b=>{
+    if(reset)checkPasswords(b);
+    await api('/account',{...b,action:reset?'password':'edit',active:b.status==='Active',id:user.id,login:user.login,generation:user.generation});
+    await refresh();await drawAccounts();
+    const msg=document.createElement('p');msg.setAttribute('role','status');msg.textContent=(reset?'Password reset for ':'Account updated for ')+user.login+'.';$('view').prepend(msg)
+  });
+  if(!reset){const f=d.querySelector('form');f.elements.name.value=user.name;f.elements.role.value=user.role;f.elements.status.value=user.active?'Active':'Disabled'}
+}
+$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.photo){let blob=await api('/photo/'+encodeURIComponent(el.dataset.photo)+'/'+el.dataset.stage,undefined,true),url=URL.createObjectURL(blob);let d=document.createElement('dialog');d.innerHTML='<button class="btn">Close</button><img style="display:block;max-width:100%" alt="Meter photo">';d.querySelector('img').src=url;d.querySelector('button').onclick=()=>d.close();d.onclose=()=>{URL.revokeObjectURL(url);d.remove()};document.body.append(d);d.showModal()}if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
 lock();
 
 document.addEventListener('visibilitychange',()=>{if(staffUser&&!document.hidden&&!document.querySelector('dialog[open]'))refresh().catch(err=>console.warn(err.message))});
@@ -42,3 +92,4 @@ document.addEventListener('visibilitychange',()=>{if(staffUser&&!document.hidden
 
 $('view').addEventListener('click',async e=>{if(e.target.id!=='fullbackup')return;try{const data=await DeviceStation.backup(),url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-full-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(err){alert(err.message)}});
 $('view').addEventListener('change',async e=>{if(e.target.id!=='fullrestore'||!e.target.files[0])return;try{const data=JSON.parse(await e.target.files[0].text());if(confirm('Replace accounts, records and photos on this computer with this backup and sign out?')){await DeviceStation.restore(data);await lock()}}catch(err){alert(err.message)}});
+
