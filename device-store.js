@@ -118,11 +118,11 @@ const DeviceStation=(()=>{
         const raw=atob(b.photo.slice(23)),photo=new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:'image/jpeg'});
         let r,stage;if(path==='/start'){
           const n=state.rows.find(x=>x.id===b.nozzle&&x.type==='Nozzle'&&x.status==='Active');assert(n,'Select an active nozzle.');
-          r={id:crypto.randomUUID(),type:'Reading',owner:current.id,person:current.name,fuel:n.fuel,nozzle:n.id,date:b.date,shift:b.shift,open:b.open,close:'',rate:b.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
+          r={id:crypto.randomUUID(),type:'Reading',readingMode:'remaining',owner:current.id,person:current.name,fuel:n.fuel,nozzle:n.id,date:b.date,shift:b.shift,open:b.open,close:'',rate:b.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
           state.rows.push(r);stage='opening';
         }else{
           r=state.rows.find(x=>x.id===b.id&&x.type==='Reading'&&x.owner);
-          assert(r&&(lead||r.owner===current.id)&&r.close==='','This shift cannot be closed.');Object.assign(r,{close:b.close,returned:b.returned,ended:new Date().toISOString(),closedBy:current.name});stage='closing'
+          assert(r&&(lead||r.owner===current.id)&&r.close==='','This shift cannot be closed.');if(!r.readingMode&&b.readingMode==='remaining')r.readingMode='remaining';Object.assign(r,{close:b.close,returned:r.readingMode==='remaining'?0:b.returned,ended:new Date().toISOString(),closedBy:current.name});stage='closing'
         }
         validate(state.rows);s('photos').add(photo,r.id+'/'+stage)
       }
