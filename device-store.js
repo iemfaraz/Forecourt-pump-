@@ -22,7 +22,7 @@ const DeviceStation=(()=>{
     const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
     return hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:600000},material,256))
   }
-  const visible=({id,name,role,login,active=true,generation=0})=>({id,name,role,login,active,generation});  async function credentials(password){
+  const visible=({id,name,role,login,active=true,generation=0,pending=false})=>({id,name,role,login,active,generation,pending});  async function credentials(password){
     assert(typeof password==='string'&&password.length>=12&&password.length<=128,'Use a password between 12 and 128 characters.');
     const salt=hex(crypto.getRandomValues(new Uint8Array(16)));
     return {salt,hash:await passwordHash(password,salt)}
@@ -50,7 +50,7 @@ const DeviceStation=(()=>{
         assert(['admin','manager','salesperson'].includes(b.role)&&typeof b.active==='boolean','Select a valid role and status.');
         assert(actor.role==='admin'||b.role==='salesperson','Managers may manage salesperson profiles only.');
         if(actor.id===target.id)assert(b.active&&b.role===actor.role,'Keep your own role and account active.');
-        Object.assign(target,{name,role:b.role,active:b.active});
+        Object.assign(target,{name,role:b.role,active:b.active,pending:false});
       }
       target.generation=(target.generation||0)+1;
       store.put(target,target.login);
@@ -85,6 +85,16 @@ const DeviceStation=(()=>{
       assert(await result(s('users').count())===0,'An administrator already exists. Reload and sign in.');
       s('users').add(user,user.login);s('ledger').add({revision:1,rows:initial()},'station')
     });current=visible(user)
+  }
+  async function register(b){
+    const user=await makeUser(b,'salesperson');
+    user.active=false;user.pending=true;
+    await transaction(['users'],'readwrite',async s=>{
+      const users=s('users');
+      assert(await result(users.count())>0,'Set up the station administrator first.');
+      assert(!await result(users.get(user.login)),'That username is unavailable.');
+      users.add(user,user.login)
+    })
   }
   async function login(b){
     const user=await transaction(['users'],'readonly',s=>result(s('users').get(username(b.login))));
@@ -143,6 +153,6 @@ const DeviceStation=(()=>{
     for(const r of b.rows.filter(r=>r.owner))assert(b.users.some(u=>u.id===r.owner)&&photos.has(r.id+'/opening')&&(r.close===''||photos.has(r.id+'/closing')),'Backup is missing staff or photos.');
     await transaction(stores,'readwrite',async s=>{await verify(s);const old=await result(s('ledger').get('station'));for(const n of stores)s(n).clear();for(const u of b.users)s('users').add(u,u.login);for(const [k,v] of photos)s('photos').add(v,k);s('ledger').put({revision:old.revision+1,rows:b.rows},'station')});current=null
   }
-  return {empty,setup,login,api,backup,restore,recover}
+  return {empty,setup,register,login,api,backup,restore,recover}
 })();
 
