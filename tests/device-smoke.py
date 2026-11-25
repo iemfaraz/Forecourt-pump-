@@ -157,9 +157,11 @@ try:
     fill('#fields [name=name]', 'Reserve petrol')
     fill('#fields [name=opening]', '3000')
     element('#form .primary').click()
+    wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'#modal[open]')))
     element('button[data-id="n00"]').click()
     Select(element('#fields [name=tank]')).select_by_visible_text('Reserve petrol')
     element('#form .primary').click()
+    wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'#modal[open]')))
     element('[data-page="0"]').click()
     assert '3,000 L' in element('.tanks').text
     element('#add').click()
@@ -180,6 +182,12 @@ try:
         element('dialog[open] .primary').click()
         wait.until(lambda d: '2,750 L' in element('.tanks').text)
     assert len(driver.find_elements(By.CSS_SELECTOR,'[data-stage=closing]')) == 5
+    for period in ['Daily','Weekly','Monthly','Yearly']:
+        Select(element('#progressPeriod')).select_by_visible_text(period)
+        assert period+' progress report' in element('#progressReport').text
+        assert '1,250' in element('#progressReport').text
+    element('#printProgress').click()
+    assert 'Yearly progress report' in driver.execute_script("return document.querySelector('#reportFrame').contentDocument.body.innerText")
     print("Verified tank stock and all-nozzle shift handover.")
     print("Verified admin setup, staff creation, role navigation, shift handover, persistence and photo retrieval.")
 finally:
