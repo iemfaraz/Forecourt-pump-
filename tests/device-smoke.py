@@ -56,15 +56,22 @@ try:
         image = driver.execute_script("const c=document.createElement('canvas'); c.getContext('2d').fillText('123456 L',5,20);return c.toDataURL().split(',')[1]")
         photo.write_bytes(base64.b64decode(image))
         element('#add').click()
-        fill('dialog[open] [name=open]', '100')
+        fill('dialog[open] [name=open]', '1000')
         fill('dialog[open] [name=rate]', '350')
         element('dialog[open] [name=photo]').send_keys(str(photo))
         element('dialog[open] .primary').click()
         element('button[data-close]').click()
-        fill('dialog[open] [name=close]', '140')
+        fill('dialog[open] [name=close]', '1050')
+        assert driver.execute_script('return arguments[0].validity.rangeOverflow', element('dialog[open] [name=close]'))
+        fill('dialog[open] [name=close]', '1000')
+        assert 'Fuel sold: 0 L' in element('dialog[open] output').text
+        fill('dialog[open] [name=close]', '750')
+        assert 'Fuel sold: 250 L' in element('dialog[open] output').text
         element('dialog[open] [name=photo]').send_keys(str(photo))
         element('dialog[open] .primary').click()
         element('button[data-stage=closing]')
+        assert '87,500' in element('#view table tbody').text
+    assert driver.execute_script("return net({open:100,close:140,returned:2})") == 38
     driver.refresh()
     sign_in('admin', password)
     element('button[data-stage=opening]').click()
