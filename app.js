@@ -46,10 +46,49 @@ function tankCards(past,dt){
 function tankOptions(f,selected){
   return stationTanks().filter(t=>t.fuel===f).map(t=>'<option value="'+E(t.id)+'" '+(selected===t.id?'selected':'')+'>'+E(t.name)+'</option>').join('')
 }
+let progressPeriod='Daily';
+function progressDates(selected,period){
+  const start=new Date(selected+'T00:00:00Z'),end=new Date(start);
+  if(period==='Weekly'){
+    start.setUTCDate(start.getUTCDate()-(start.getUTCDay()+6)%7);
+    end.setTime(start.getTime());end.setUTCDate(start.getUTCDate()+6)
+  }else if(period==='Monthly'){
+    start.setUTCDate(1);end.setUTCMonth(end.getUTCMonth()+1,0)
+  }else if(period==='Yearly'){
+    start.setUTCMonth(0,1);end.setUTCMonth(11,31)
+  }
+  return [start,end].map(d=>d.toISOString().slice(0,10))
+}
+function progressReport(){
+  const [from,to]=progressDates(date(),progressPeriod);
+  const entries=rows.filter(r=>r.date>=from&&r.date<=to).sort((a,b)=>a.date.localeCompare(b.date));
+  const deliveries=entries.filter(r=>r.type==='Delivery'),sales=entries.filter(r=>r.type==='Reading'&&r.close!==''),mart=entries.filter(r=>r.type==='Mart'),cash=entries.filter(r=>r.type==='Cash entry'),credit=entries.filter(r=>r.type==='Customer debit');
+  const totals=stats(entries),opening=stats(rows.filter(r=>r.date<from)).cash;
+  return '<h2>'+progressPeriod+' progress report</h2><p>'+from+(from===to?'':' through '+to)+'</p>'+
+    '<div class="cards">'+card('Delivered · L',fmt(sum(deliveries,r=>r.qty)))+card('Fuel sold · L',fmt(totals.litres))+card('Fuel sales · PKR',fmt(totals.rev))+card('Mart sales · PKR',fmt(totals.mart))+'</div>'+
+    '<h3>Deliveries</h3>'+table(['Date','Supplier','Fuel','Tank','Litres','Unit cost · PKR','Paid · PKR'],deliveries.map(r=>[E(r.date),E(r.company),E(r.fuel),E(stationTanks().find(t=>t.id===(r.tank||defaultTank(r.fuel)))?.name),fmt(r.qty),fmt(r.cost),fmt(r.paid)]),'No deliveries in this period.')+
+    '<h3>Fuel sales</h3>'+table(['Date','Shift','Salesperson','Nozzle','Fuel','Sold · L','Sales · PKR'],sales.map(r=>[E(r.date),E(r.shift),E(r.person),E(nozzleName(r.nozzle)),E(r.fuel),fmt(net(r)),fmt(net(r)*r.rate)]),'No completed nozzle sales in this period.')+
+    '<h3>Mart</h3>'+table(['Date','Description','Sales · PKR','Purchases · PKR','Paid · PKR'],mart.map(r=>[E(r.date),E(r.name),fmt(r.sale),fmt(r.buy),fmt(r.paid)]),'No mart entries in this period.')+
+    '<h3>Cash book</h3><div class="cards">'+card('Opening cash · PKR',fmt(opening))+card('Net cash movement · PKR',fmt(totals.cash))+card('Closing cash · PKR',fmt(opening+totals.cash))+'</div>'+
+    table(['Date','Category','Description','Amount · PKR'],cash.map(r=>[E(r.date),E(r.category),E(r.name),fmt(r.amount)]),'No cash-book entries in this period.')+
+    '<h3>Customer credit and repayments</h3>'+table(['Date','Customer','Fuel on credit · PKR','Repaid · PKR'],credit.map(r=>[E(r.date),E(r.name),fmt(r.buy),fmt(r.paid)]),'No customer credit entries in this period.')
+}
+function progressSection(){
+  return '<section><div class="actions"><label>Report period <select id="progressPeriod">'+['Daily','Weekly','Monthly','Yearly'].map(v=>'<option '+(v===progressPeriod?'selected':'')+'>'+v+'</option>').join('')+'</select></label><button class="btn" id="printProgress">Print / Save PDF</button></div><article id="progressReport">'+progressReport()+'</article></section>'
+}
+function printProgress(){
+  document.getElementById('reportFrame')?.remove();
+  const frame=document.createElement('iframe');frame.id='reportFrame';frame.title='Printable station report';
+  frame.style.cssText='position:fixed;left:-200vw;width:1000px;height:600px;border:0';document.body.append(frame);
+  const doc=frame.contentDocument;doc.title='Forecourt '+progressPeriod+' progress '+date();
+  const style=doc.createElement('style');
+  style.textContent='@page{size:A4 landscape;margin:12mm}body{font:10pt Arial,sans-serif;color:#17212b}.cards{display:flex;gap:20px;margin:12px 0}.card{display:grid;gap:4px}table{border-collapse:collapse;width:100%}th,td{text-align:left;border:1px solid #aaa;padding:4px}thead{display:table-header-group}tr{break-inside:avoid}h3{break-after:avoid}';
+  doc.head.append(style);doc.body.append($('progressReport').cloneNode(true));frame.contentWindow.focus();frame.contentWindow.print()
+}
 function render(){if(!staffUser)return;let dt=date(),a=rows.filter(r=>r.date===dt),past=rows.filter(r=>r.date<=dt),d=stats(a),p=stats(past),v='',t=typeForPage[page];
 $('nav').innerHTML=pages.map((n,i)=>'<button data-page="'+i+'" class="'+(i===page?'on':'')+'">'+n+'</button>').join('');
 $('title').textContent=days[page];$('sub').textContent=desc[page];$('add').textContent=t?'＋ Add '+t.toLowerCase():'Print report';$('date').hidden=page===7;
-if(!page){v='<div class="cards">'+card('Fuel sales · PKR',fmt(d.rev))+card('Fuel sold · litres',fmt(d.litres))+card('Mart sales · PKR',fmt(d.mart))+card('Cash in hand · PKR',fmt(p.cash))+'</div><div class="tanks">'+tankCards(past,dt)+'</div>'+panel('Shift readings',readings(a.filter(r=>r.type==='Reading')));}
+if(!page){v='<div class="cards">'+card('Fuel sales · PKR',fmt(d.rev))+card('Fuel sold · litres',fmt(d.litres))+card('Mart sales · PKR',fmt(d.mart))+card('Cash in hand · PKR',fmt(p.cash))+'</div><div class="tanks">'+tankCards(past,dt)+'</div>'+panel('Shift readings',readings(a.filter(r=>r.type==='Reading')))+progressSection();}
 else if(page===1)v=panel('Daily shift register',readings(a.filter(r=>r.type===t)));
 else if(page>=2&&page<=5){if(page===3)v='<div class="cards">'+card('Sales today · PKR',fmt(d.mart))+card('Stock value · PKR',fmt(p.martstock))+card('Mart cash · PKR',fmt(p.martcash))+'</div>';v+=panel('Daily entries',ledger(t,a.filter(r=>r.type===t)));if(page===3||page===4)v+=panel(page===3?'Supplier balances':'Customer balances',table(['Account','Remaining PKR'],groups(past.filter(r=>r.type===t&&(page===4||r.buy||r.paid)),r=>(page===4?r.opening:0)+r.buy-r.paid),'No accounts recorded.'));}
 else if(page===6){const month=dt.slice(0,7),m=rows.filter(r=>r.date?.startsWith(month)),dates=[...new Set(m.map(r=>r.date))].sort(),s=stats(m);v='<div class="cards">'+card('Fuel revenue · PKR',fmt(s.rev))+card('Fuel margin · PKR',fmt(s.gross))+card('Mart revenue · PKR',fmt(s.mart))+card('Expenses · PKR',fmt(s.expenses))+'</div>'+panel('Monthly balance · '+month,table(['Date','Fuel L','Fuel sales','Fuel margin','Mart sales','Expenses','Discount','Customer debit¹','Cash in hand¹'],dates.map(x=>{let b=stats(m.filter(r=>r.date===x)),c=stats(rows.filter(r=>r.date<=x));return [x,...[b.litres,b.rev,b.gross,b.mart,b.expenses,b.disc,c.debit,c.cash].map(fmt)]}),'No entries for this month.'))+'<small>Amounts in PKR. ¹ Closing balances include prior periods.</small>';}
@@ -76,5 +115,5 @@ $('form').onsubmit=async e=>{e.preventDefault();try{let r={id:editing||crypto.ra
 if(kind==='Reading')r.fuel=get('Nozzle').find(n=>n.id===r.nozzle).fuel;await save([...rows.filter(x=>x.id!==r.id),r]);if(r.date){$('date').value=r.date;render()}$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('remove').onclick=async()=>{if(confirm('Delete this entry and recalculate balances?'))try{await save(rows.filter(x=>x.id!==editing));$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('date').onchange=()=>{if(date())render()};$('add').onclick=()=>page===8?newAccount():page===6?window.print():show(typeForPage[page]);$('nav').onclick=e=>{if(e.target.dataset.page!==undefined){page=Number(e.target.dataset.page);render()}};
-$('view').onclick=e=>{if(e.target.id==='addTank')show('Tank');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
-$('view').onchange=async e=>{if(e.target.id==='restore'&&e.target.files[0])try{let next=JSON.parse(await e.target.files[0].text());if(!Array.isArray(next))throw Error('Invalid backup.');validate(next);if(confirm('Replace all station records with this backup?'))await save(next)}catch(err){alert(err.message)}};
+$('view').onclick=e=>{if(e.target.id==='printProgress')printProgress();if(e.target.id==='addTank')show('Tank');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
+$('view').onchange=async e=>{if(e.target.id==='progressPeriod'){progressPeriod=e.target.value;$('progressReport').innerHTML=progressReport();return}if(e.target.id==='restore'&&e.target.files[0])try{let next=JSON.parse(await e.target.files[0].text());if(!Array.isArray(next))throw Error('Invalid backup.');validate(next);if(confirm('Replace all station records with this backup?'))await save(next)}catch(err){alert(err.message)}};
