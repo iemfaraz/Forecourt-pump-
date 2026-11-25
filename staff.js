@@ -34,6 +34,7 @@ function staffLayout(){
     drawAccounts().catch(err=>{if(page===8)$('view').textContent=err.message});return
   }
 if(isSales())$('nav').innerHTML='<button class="on" data-page="1">Nozzle shifts</button>';if(page<=1)$('add').textContent='＋ Start shift';
+if(page===1&&isSales())$('view').insertAdjacentHTML('afterbegin','<div class="head"><button class="btn" data-work="'+E(staffUser.id)+'">My work record</button></div>');
 if(page===1){let active=get('Reading').filter(r=>r.owner&&r.close===''&&r.date!==date());if(active.length)$('view').insertAdjacentHTML('afterbegin',panel('Open shifts from other dates',readings(active)))}
 if(page===7&&!isSales())$('view').insertAdjacentHTML('afterbegin',panel('Staff accounts','<button class="btn primary" id="manage">Manage staff</button>')+(localStorage.getItem(key)?panel('Previous browser ledger','<button id="migrate" class="btn">Import records from this browser</button>'):''));
 if(page===7&&staffUser.role==='admin')$('view').insertAdjacentHTML('beforeend',panel('Full station backup','<p>Save accounts, ledger entries and meter photos together. Keep this file private.</p><div class="actions"><button class="btn" id="fullbackup">Download full backup</button><label class="btn">Restore full backup<input hidden type="file" id="fullrestore" accept=".json"></label></div>'))}
@@ -94,9 +95,9 @@ async function drawAccounts(){
   accountList=users.sort((a,b)=>a.name.localeCompare(b.name));
   const items=accountList.map(u=>{
     const allowed=staffUser.role==='admin'||u.role==='salesperson';
-    return [E(u.name),E(u.login),E(u.role),u.active?'Active':'Disabled',allowed?'<button data-edituser="'+E(u.id)+'">Edit</button> <button data-resetuser="'+E(u.id)+'">Reset password</button>':'']
+    return [E(u.name),E(u.login),E(u.role),u.active?'Active':'Disabled','<button data-work="'+E(u.id)+'">Work record</button>',allowed?'<button data-edituser="'+E(u.id)+'">Edit</button> <button data-resetuser="'+E(u.id)+'">Reset password</button>':'']
   });
-  $('view').innerHTML=panel('Station accounts',table(['Full name','Username','Role','Status','Actions'],items))
+  $('view').innerHTML=panel('Station accounts',table(['Full name','Username','Role','Status','History','Actions'],items))
 }
 function newAccount(){
   const roles=staffUser.role==='admin'?['salesperson','manager','admin']:['salesperson'];
@@ -116,7 +117,7 @@ function accountAction(id,reset){
   });
   if(!reset){const f=d.querySelector('form');f.elements.name.value=user.name;f.elements.role.value=user.role;f.elements.status.value=user.active?'Active':'Disabled'}
 }
-$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.photo){let blob=await api('/photo/'+encodeURIComponent(el.dataset.photo)+'/'+el.dataset.stage,undefined,true),url=URL.createObjectURL(blob);let d=document.createElement('dialog');d.innerHTML='<button class="btn">Close</button><img style="display:block;max-width:100%" alt="Meter photo">';d.querySelector('img').src=url;d.querySelector('button').onclick=()=>d.close();d.onclose=()=>{URL.revokeObjectURL(url);d.remove()};document.body.append(d);d.showModal()}if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
+$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.photo)await showWorkPhoto(el.dataset.photo,el.dataset.stage);if(el.dataset.work)await workRecord(el.dataset.work);if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
 lock();
 
 document.addEventListener('visibilitychange',()=>{if(staffUser&&!document.hidden&&!document.querySelector('dialog[open]'))refresh().catch(err=>console.warn(err.message))});
@@ -126,3 +127,40 @@ document.addEventListener('visibilitychange',()=>{if(staffUser&&!document.hidden
 $('view').addEventListener('click',async e=>{if(e.target.id!=='fullbackup')return;try{const data=await DeviceStation.backup(),url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-full-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(err){alert(err.message)}});
 $('view').addEventListener('change',async e=>{if(e.target.id!=='fullrestore'||!e.target.files[0])return;try{const data=JSON.parse(await e.target.files[0].text());if(confirm('Replace accounts, records and photos on this computer with this backup and sign out?')){await DeviceStation.restore(data);await lock()}}catch(err){alert(err.message)}});
 
+
+async function showWorkPhoto(id,stage){
+  const blob=await api('/photo/'+encodeURIComponent(id)+'/'+stage,undefined,true);
+  const url=URL.createObjectURL(blob),d=document.createElement('dialog');
+  d.innerHTML='<button class="btn">Close</button><img style="display:block;max-width:100%" alt="Meter photo">';
+  d.querySelector('img').src=url;d.querySelector('button').onclick=()=>d.close();
+  d.onclose=()=>{URL.revokeObjectURL(url);d.remove()};document.body.append(d);d.showModal()
+}
+async function workRecord(id){
+  if(isSales()&&id!==staffUser.id)return;
+  const person=id===staffUser.id?staffUser:accountList.find(u=>u.id===id);
+  if(!person)return;
+  const state=await api('/state');
+  const shifts=state.rows.filter(r=>r.type==='Reading'&&r.owner===id).sort((a,b)=>order(b).localeCompare(order(a)));
+  const labels=new Map(state.rows.filter(r=>r.type==='Nozzle').map(n=>[n.id,n.name]));
+  const d=document.createElement('dialog');d.className='work-record';
+  d.innerHTML='<div class="head"><div><h2>'+E(person.name)+' · Work record</h2><small>'+E(person.login)+' · '+E(person.role)+'</small></div><button class="btn" data-dismiss>Close</button></div>'+
+    '<div class="work-filters"><label>From<input type="date" name="from"></label><label>Through<input type="date" name="through"></label><label>Shift status<select name="status"><option value="">All shifts</option><option>Open</option><option>Closed</option></select></label><button class="btn" data-clear>All dates</button></div><div data-results></div>';
+  const first=d.querySelector('[name=from]'),last=d.querySelector('[name=through]'),status=d.querySelector('[name=status]'),results=d.querySelector('[data-results]');
+  const when=t=>t?E(new Date(t).toLocaleString()):'—';
+  function display(){
+    if(first.value&&last.value&&first.value>last.value){results.textContent='Choose an end date on or after the start date.';return}
+    const filtered=shifts.filter(r=>(!first.value||r.date>=first.value)&&(!last.value||r.date<=last.value)&&(!status.value||(r.close===''?'Open':'Closed')===status.value));
+    const closed=filtered.filter(r=>r.close!=='');
+    const list=filtered.map(r=>{const done=r.close!=='',photo=stage=>'<button data-workphoto="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening':'Closing')+'</button>';
+      return [E(r.date),E(r.shift),E(labels.get(r.nozzle)||r.nozzle),E(r.fuel),done?'Closed':'Open',fmt(r.open),done?fmt(r.close):'—',done?fmt(net(r)):'—',fmt(r.rate),done?fmt(net(r)*r.rate):'—',when(r.started),when(r.ended),E(r.closedBy||'—'),photo('opening')+(done?photo('closing'):'')]
+    });
+    results.innerHTML='<div class="cards">'+card('Shifts',fmt(filtered.length))+card('Open shifts',fmt(filtered.length-closed.length))+card('Litres sold',fmt(sum(closed,net)))+card('Sales · PKR',fmt(sum(closed,r=>net(r)*r.rate)))+'</div>'+
+      table(['Date','Shift','Nozzle','Fuel','Status','Opening L','Closing L','Sold L','PKR/L','Sales PKR','Started at','Closed at','Closed by','Meter photos'],list,'No shifts recorded for this account in this period.')
+  }
+  d.onchange=display;d.onclick=async e=>{const el=e.target;
+    if(el.hasAttribute('data-dismiss'))d.close();
+    if(el.hasAttribute('data-clear')){first.value='';last.value='';status.value='';display()}
+    if(el.dataset.workphoto)try{await showWorkPhoto(el.dataset.workphoto,el.dataset.stage)}catch(err){alert(err.message)}
+  };
+  d.onclose=()=>d.remove();document.body.append(d);display();d.showModal()
+}
