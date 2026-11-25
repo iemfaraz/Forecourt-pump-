@@ -30,7 +30,42 @@ function shiftTime(r){
   const recorded=new Date(r.started);
   return r.started&&Number.isFinite(recorded.getTime())?recorded.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'—'
 }
-function readings(a){return table(['Nozzle','Shift','Start time','Attendant','Opening L','Closing L','Returns L','Sold L','Sales PKR',''],a.map(r=>[E(nozzleName(r.nozzle)),E(r.shift),E(shiftTime(r)),E(r.person),fmt(r.open),r.close===''?'On shift':fmt(r.close),fmt(r.returned),fmt(net(r)),fmt(net(r)*r.rate),edit(r)]),'No shift readings yet. Add a reading to start a shift.')}
+function shiftGroupKey(r){
+  if(r.batchId)return JSON.stringify(['batch',r.batchId]);
+  if(r.owner&&r.startTime)return JSON.stringify(['handover',r.owner,r.date,r.shift,r.startTime]);
+  return JSON.stringify(['reading',r.id]);
+}
+function readings(entries){
+  const groups=new Map();
+  for(const r of entries){
+    const key=shiftGroupKey(r);
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(r);
+  }
+  const body=Array.from(groups.values(),members=>{
+    const first=members[0],single=members.length===1,open=members.find(r=>r.close==='');
+    const control=single?edit(first):'<button data-shift-details="'+E(first.id)+'" aria-expanded="false">View nozzles</button>'+
+      (open&&first.batchId?' <button data-close="'+E(open.id)+'">Close shift</button>':'');
+    return [E(first.date),E(first.shift),E(shiftTime(first)),E(first.person),single?E(nozzleName(first.nozzle)):members.length+' nozzles',
+      fmt(sum(members,r=>r.open)),open?'On shift':fmt(sum(members,r=>r.close)),fmt(sum(members,r=>r.returned)),
+      fmt(sum(members,net)),fmt(sum(members,r=>net(r)*r.rate)),control];
+  });
+  return table(['Date','Shift','Start time','Attendant','Nozzles','Opening L','Closing L','Returns L','Sold L','Sales PKR',''],body,'No shift readings yet. Add a reading to start a shift.');
+}
+function toggleNozzleDetails(button){
+  const row=button.closest('tr');
+  if(button.getAttribute('aria-expanded')==='true'){
+    row.nextElementSibling.remove();button.setAttribute('aria-expanded','false');button.textContent='View nozzles';return;
+  }
+  const first=get('Reading').find(r=>r.id===button.dataset.shiftDetails);
+  if(!first)return;
+  const members=get('Reading').filter(r=>shiftGroupKey(r)===shiftGroupKey(first));
+  const detail=row.parentElement.insertRow(row.sectionRowIndex+1),cell=detail.insertCell();
+  cell.colSpan=row.cells.length;
+  cell.innerHTML=table(['Nozzle','Fuel','Opening L','Closing L','Returns L','Sold L','PKR/L','Sales PKR','Meter record'],members.map(r=>[
+    E(nozzleName(r.nozzle)),E(r.fuel),fmt(r.open),r.close===''?'On shift':fmt(r.close),fmt(r.returned),fmt(net(r)),fmt(r.rate),fmt(net(r)*r.rate),edit(r)]));
+  button.setAttribute('aria-expanded','true');button.textContent='Hide nozzles';
+}
 function ledger(t,a){let fs=fields[t].filter(f=>f[0]!=='date');return table([...fs.map(f=>f[1]),''],a.map(r=>[...fs.map(([k,,v])=>['num','zero'].includes(v)?fmt(r[k]??0):E(r[k])),edit(r)]))}
 function groups(a,fn){let m=new Map;for(const r of a)m.set(r.name,(m.get(r.name)||0)+fn(r));return [...m].map(([n,v])=>[E(n),fmt(v)])}
 function fuelTypes(all=rows){return [...fuel,...all.filter(r=>r.type==='Fuel type').map(r=>r.name)]}
@@ -120,5 +155,5 @@ $('form').onsubmit=async e=>{e.preventDefault();try{let r={id:editing||crypto.ra
 if(kind==='Reading')r.fuel=get('Nozzle').find(n=>n.id===r.nozzle).fuel;await save([...rows.filter(x=>x.id!==r.id),r]);if(r.date){$('date').value=r.date;render()}$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('remove').onclick=async()=>{if(confirm('Delete this entry and recalculate balances?'))try{await save(rows.filter(x=>x.id!==editing));$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('date').onchange=()=>{if(date())render()};$('add').onclick=()=>page===8?newAccount():page===6?window.print():show(typeForPage[page]);$('nav').onclick=e=>{if(e.target.dataset.page!==undefined){page=Number(e.target.dataset.page);render()}};
-$('view').onclick=e=>{if(e.target.id==='viewProgress'){$('progressReport').focus();$('progressReport').scrollIntoView({block:'start'})}if(e.target.hasAttribute('data-all-shift')){if(get('Nozzle').some(n=>n.status==='Active'))batchShift();else alert('Add an active nozzle in Setup first.')} if(e.target.id==='printProgress')printProgress();if(e.target.id==='addTank')show('Tank');if(e.target.id==='addFuel')show('Fuel type');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
+$('view').onclick=e=>{if(e.target.hasAttribute('data-shift-details'))toggleNozzleDetails(e.target);if(e.target.id==='viewProgress'){$('progressReport').focus();$('progressReport').scrollIntoView({block:'start'})}if(e.target.hasAttribute('data-all-shift')){if(get('Nozzle').some(n=>n.status==='Active'))batchShift();else alert('Add an active nozzle in Setup first.')} if(e.target.id==='printProgress')printProgress();if(e.target.id==='addTank')show('Tank');if(e.target.id==='addFuel')show('Fuel type');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
 $('view').onchange=async e=>{if(e.target.id==='progressPeriod'){progressPeriod=e.target.value;$('progressReport').innerHTML=progressReport();return}if(e.target.id==='restore'&&e.target.files[0])try{let next=JSON.parse(await e.target.files[0].text());if(!Array.isArray(next))throw Error('Invalid backup.');validate(next);if(confirm('Replace all station records with this backup?'))await save(next)}catch(err){alert(err.message)}};
