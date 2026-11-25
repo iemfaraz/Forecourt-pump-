@@ -1,7 +1,7 @@
 'use strict';
 const scope=self.registration.scope;
 const prefix='forecourt-shell:'+scope+':';
-const cacheName=prefix+'work-periods-2';
+const cacheName=prefix+'overview-users-3';
 const index=new URL('index.html',scope).href;
 const scripts=['device-store.js','app.js','staff.js'];
 const paths=new Set(scripts.map(name=>new URL(name,scope).pathname));
