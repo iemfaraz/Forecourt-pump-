@@ -23,7 +23,12 @@ function table(headers,body,empty='No entries for this date.'){return '<div clas
 function panel(title,content){return '<section><div class="head"><h2>'+title+'</h2></div>'+content+'</section>'}
 const nozzleName=id=>get('Nozzle').find(n=>n.id===id)?.name||'Retired nozzle';
 const edit=r=>r.owner?shiftControls(r):'<button data-id="'+E(r.id)+'">Edit</button>';
-function readings(a){return table(['Nozzle','Shift','Attendant','Opening L','Closing L','Returns L','Sold L','Sales PKR',''],a.map(r=>[E(nozzleName(r.nozzle)),E(r.shift),E(r.person),fmt(r.open),r.close===''?'On shift':fmt(r.close),fmt(r.returned),fmt(net(r)),fmt(net(r)*r.rate),edit(r)]),'No shift readings yet. Add a reading to start a shift.')}
+function shiftTime(r){
+  if(r.startTime)return r.startTime;
+  const recorded=new Date(r.started);
+  return r.started&&Number.isFinite(recorded.getTime())?recorded.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'—'
+}
+function readings(a){return table(['Nozzle','Shift','Start time','Attendant','Opening L','Closing L','Returns L','Sold L','Sales PKR',''],a.map(r=>[E(nozzleName(r.nozzle)),E(r.shift),E(shiftTime(r)),E(r.person),fmt(r.open),r.close===''?'On shift':fmt(r.close),fmt(r.returned),fmt(net(r)),fmt(net(r)*r.rate),edit(r)]),'No shift readings yet. Add a reading to start a shift.')}
 function ledger(t,a){let fs=fields[t].filter(f=>f[0]!=='date');return table([...fs.map(f=>f[1]),''],a.map(r=>[...fs.map(([k,,v])=>['num','zero'].includes(v)?fmt(r[k]??0):E(r[k])),edit(r)]))}
 function groups(a,fn){let m=new Map;for(const r of a)m.set(r.name,(m.get(r.name)||0)+fn(r));return [...m].map(([n,v])=>[E(n),fmt(v)])}
 function render(){if(!staffUser)return;let dt=date(),a=rows.filter(r=>r.date===dt),past=rows.filter(r=>r.date<=dt),d=stats(a),p=stats(past),v='',t=typeForPage[page];
