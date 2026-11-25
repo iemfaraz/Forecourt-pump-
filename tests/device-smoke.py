@@ -71,6 +71,9 @@ try:
         element('dialog[open] .primary').click()
         element('button[data-stage=closing]')
         assert '87,500' in element('#view table tbody').text
+        element('[data-work]').click()
+        assert '87,500' in element('.work-record tbody').text
+        element('.work-record [data-dismiss]').click()
     assert driver.execute_script("return net({open:100,close:140,returned:2})") == 38
     driver.refresh()
     sign_in('admin', password)
@@ -79,6 +82,12 @@ try:
     element('dialog[open] button').click()
     element('[data-page="8"]').click()
     clerk = lambda: wait.until(lambda d: next((r for r in d.find_elements(By.CSS_SELECTOR,'tbody tr') if 'test-clerk' in r.text), False))
+    clerk().find_element(By.CSS_SELECTOR,'[data-work]').click()
+    assert '250' in element('.work-record tbody').text
+    element('.work-record [data-workphoto][data-stage=closing]').click()
+    wait.until(lambda d: d.execute_script("return document.querySelector('dialog[open] img')?.naturalWidth>0"))
+    element('dialog[open]:last-of-type button').click()
+    element('.work-record [data-dismiss]').click()
     clerk().find_element(By.CSS_SELECTOR,'[data-resetuser]').click()
     newpass = 'changed-station-password'
     fill('dialog[open] [name=password]',newpass)
