@@ -53,7 +53,28 @@ function input(label,name,type='text',extra=''){return '<label>'+label+'<input n
 function choices(label,name,opts){return '<label>'+label+'<select name="'+name+'" required>'+opts.map(([id,n])=>'<option value="'+E(id)+'">'+E(n)+'</option>').join('')+'</select></label>'}
 function dialog(title,html,submit,action){let d=document.createElement('dialog');d.innerHTML='<form><div class="head"><h2>'+title+'</h2><button class="btn" type="button" data-cancel>Cancel</button></div><div class="grid">'+html+'</div><p class="err" role="alert"></p><button class="btn primary">'+submit+'</button></form>';document.body.append(d);d.onclose=()=>d.remove();d.querySelector('[data-cancel]').onclick=()=>d.close();d.querySelector('form').onsubmit=async e=>{e.preventDefault();let f=e.currentTarget,button=f.querySelector('.primary');button.disabled=true;try{await action(Object.fromEntries(new FormData(f)));d.close()}catch(err){f.querySelector('.err').textContent=err.message}finally{button.disabled=false}};d.showModal();return d}
 async function meterPhoto(file){if(!file?.size||file.size>25e6)throw Error('Choose a photo under 25 MB.');let url=URL.createObjectURL(file);try{let img=new Image;img.src=url;await img.decode();let scale=Math.min(1,1600/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));c.getContext('2d').drawImage(img,0,0,c.width,c.height);return c.toDataURL('image/jpeg',0.78)}finally{URL.revokeObjectURL(url)}}
+function batchShift(records){
+  const closing=Boolean(records);
+  const items=records||get('Nozzle').filter(n=>n.status==='Active');
+  const shared=closing?'':input('Business date','date','date','value="'+date()+'"')+choices('Shift','shift',shifts.map(s=>[s,s]))+input('Shift start time','startTime','time','value="'+new Date().toTimeString().slice(0,5)+'"');
+  const sections=items.map((r,i)=>{
+    const name=closing?nozzleName(r.nozzle):r.name;
+    const meter=closing?input('Closing litres remaining','litres'+i,'number','min="0" max="'+Number(r.open)+'" step="any"'):input('Opening litres remaining','litres'+i,'number','min="0" step="any"');
+    const info=closing?'<p>Opening reading: '+fmt(r.open)+' L</p>':input('Sale rate (PKR/L)','rate'+i,'number','min="0" step="any"');
+    return '<fieldset class="wide"><legend>'+E(name)+' · '+E(r.fuel)+'</legend>'+info+meter+photoInput.replace('name="photo"','name="photo'+i+'"')+'</fieldset>'
+  }).join('');
+  dialog(closing?'End shift · all nozzles':'Start shift · all nozzles',shared+sections,closing?'Save all closing readings':'Save all opening readings',async b=>{
+    const entries=[];
+    for(const [i,r] of items.entries()){
+      const value=Number(b['litres'+i]),photo=await meterPhoto(b['photo'+i]);
+      entries.push(closing?{id:r.id,close:value,photo}:{nozzle:r.id,open:value,rate:Number(b['rate'+i]),photo})
+    }
+    await api(closing?'/close':'/start',{date:b.date,shift:b.shift,startTime:b.startTime,entries});
+    $('date').value=closing?items[0].date:b.date;await refresh()
+  })
+}
 function shiftForm(r){
+  if(r?.batchId)return batchShift(get('Reading').filter(x=>x.batchId===r.batchId&&x.close===''));
   const active=get('Nozzle').filter(n=>n.status==='Active');
   if(!r&&!active.length)return alert('A manager must add an active nozzle first.');
   let html;
@@ -75,7 +96,10 @@ function shiftForm(r){
     if(r){b.id=r.id;b.readingMode=r.readingMode||b.readingMode}
     await api(r?'/close':'/start',b);$('date').value=r?.date||b.date;await refresh()
   });
-  if(!r)return;
+  if(!r){
+    const button=document.createElement('button');button.type='button';button.className='btn wide';button.textContent='Use all active nozzles';
+    d.querySelector('.grid').prepend(button);button.onclick=()=>{d.close();batchShift()};return
+  }
   const f=d.querySelector('form'),closing=f.elements.namedItem('close'),returned=f.elements.namedItem('returned');
   function preview(){
     const remaining=r.readingMode==='remaining'||f.elements.namedItem('readingMode')?.value==='remaining';
@@ -166,7 +190,7 @@ async function workRecord(id){
     const list=filtered.map(r=>{const done=r.close!=='',photo=stage=>'<button data-workphoto="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening':'Closing')+'</button>';
       return [E(r.date),E(r.shift),E(labels.get(r.nozzle)||r.nozzle),E(r.fuel),done?'Closed':'Open',fmt(r.open),done?fmt(r.close):'—',done?fmt(net(r)):'—',fmt(r.rate),done?fmt(net(r)*r.rate):'—',E(shiftTime(r)),when(r.ended),E(r.closedBy||'—'),photo('opening')+(done?photo('closing'):'')]
     });
-    results.innerHTML='<div class="cards">'+card('Shifts',fmt(filtered.length))+card('Open shifts',fmt(filtered.length-closed.length))+card('Litres sold',fmt(sum(closed,net)))+card('Sales · PKR',fmt(sum(closed,r=>net(r)*r.rate)))+'</div>'+
+    results.innerHTML='<div class="cards">'+card('Shifts',fmt(new Set(filtered.map(r=>r.batchId||r.id)).size))+card('Open shifts',fmt(new Set(filtered.filter(r=>r.close==='').map(r=>r.batchId||r.id)).size))+card('Litres sold',fmt(sum(closed,net)))+card('Sales · PKR',fmt(sum(closed,r=>net(r)*r.rate)))+'</div>'+
       table(['Date','Shift','Nozzle','Fuel','Status','Opening L','Closing L','Sold L','PKR/L','Sales PKR','Start time','Closed at','Closed by','Meter photos'],list,'No shifts recorded for this account in this period.')
   }
   d.onchange=display;d.onclick=async e=>{const el=e.target;
