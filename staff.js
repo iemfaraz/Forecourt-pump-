@@ -1,30 +1,30 @@
 'use strict';
 let staffUser=null,version=0,token='',accountList=[];
-let endpoint=(window.STATION_API||'').replace(/\/$/,'');
+
 const isSales=()=>staffUser?.role==='salesperson';
 const main=document.querySelector('main'), access=$('access');
-async function api(path,data,photo=false){if(!endpoint)throw Error('The station backend is awaiting owner setup.');const resp=await fetch(endpoint+path,{method:data===undefined?'GET':'POST',cache:'no-store',headers:{...(token?{Authorization:'Bearer '+token}:{}),...(data===undefined?{}:{'Content-Type':'application/json'})},body:data===undefined?undefined:JSON.stringify(data)});
-if(!resp.ok){let problem=await resp.json().catch(()=>({}));if(resp.status===401&&path!=='/login')lock();throw Error(problem.error||'Station server unavailable.')}return photo?resp.blob():resp.json()}
-function lock(){
-  token='';staffUser=null;rows=[];$('view').replaceChildren();$('nav').replaceChildren();$('modal').close();
-  main.hidden=true;access.hidden=false;$('identity').textContent='Station access';$('account').hidden=true;
-  access.innerHTML='<h1 style="font-size:32px">Staff sign-in</h1><p>Use the username and password issued by your station manager.</p><form id="signin"><label>Username<input name="login" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><p class="err" role="alert"></p><button class="btn primary">Sign in</button></form><details><summary>Repository owner</summary><p>Open the backend dashboard with the station owner’s GitHub token.</p><form id="ownerform"><label>Owner GitHub token<input name="githubToken" type="password" autocomplete="off" required></label><p class="err" role="alert"></p><button class="btn">Open backend dashboard</button></form></details>';
-  if(!endpoint){const msg=document.createElement('p');msg.setAttribute('role','status');msg.textContent='Shared sign-in is awaiting backend activation.';access.querySelector('h1').after(msg);access.querySelectorAll('input,button').forEach(el=>el.disabled=true)}
-  const finish=async result=>{token=result.token;await refresh(true);access.replaceChildren()};
-  $('signin').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button');btn.disabled=true;try{await finish(await api('/login',Object.fromEntries(new FormData(f))))}catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
-  $('ownerform').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button'),b=Object.fromEntries(new FormData(f));btn.disabled=true;try{
-    if(!endpoint)throw Error('Shared login is awaiting backend activation.');
-    await finish(await api('/owner',{githubToken:b.githubToken}));
-  }catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
+const api=(path,data)=>DeviceStation.api(path,data);
+async function lock(){
+  staffUser=null;rows=[];accountList=[];$('view').replaceChildren();$('nav').replaceChildren();$('modal').close();
+  main.hidden=true;access.hidden=false;$('account').hidden=true;$('identity').textContent='Station access';
+  access.textContent='Opening station records…';
+  try{
+    const first=await DeviceStation.empty();
+    access.innerHTML='<h1 style="font-size:32px">'+(first?'Set up this station':'Staff sign-in')+'</h1><p>'+(first?'Create the administrator account for this browser on the station computer.':'Enter the username and password issued by your manager.')+'</p><form id="signin">'+(first?input('Administrator name','name','text','maxlength="100"'):'')+input('Username','login','text',first?'value="admin" autocomplete="username"':'autocomplete="username"')+input('Password','password','password',first?'minlength="12" maxlength="128" autocomplete="new-password"':'autocomplete="current-password"')+(first?input('Confirm password','confirm','password','autocomplete="new-password"'):'')+'<p class="err" role="alert"></p><button class="btn primary">'+(first?'Create administrator':'Sign in')+'</button></form><p><small>Accounts, readings and photos stay in this browser profile.</small></p>';
+    $('signin').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button'),b=Object.fromEntries(new FormData(f));btn.disabled=true;
+      try{if(first){if(b.password!==b.confirm)throw Error('The passwords must match.');await DeviceStation.setup(b)}else await DeviceStation.login(b);
+        await refresh(true);access.replaceChildren()
+      }catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
+  }catch{access.textContent='Browser storage is unavailable. Open this page in a normal browser window with site data enabled.'}
 }
-async function refresh(first=false){let s=await api('/state');staffUser=s.user;version=s.revision;rows=s.rows;if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Shared station records';render()}
+async function refresh(first=false){let s=await api('/state');staffUser=s.user;version=s.revision;rows=s.rows;if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Saved on this station computer';render()}
 async function staffSave(next){await api('/ledger',{revision:version,rows:next});await refresh()}
-$('account').onclick=async()=>{if(!endpoint){alert('Staff accounts require the station server. The owner must connect it before staff can sign in.');return}try{await api('/logout',{})}finally{lock()}};
+$('account').onclick=async()=>{await api('/logout',{});await lock()};
 function shiftControls(r){let photo=stage=>'<button data-photo="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';return photo('opening')+(r.close===''?'<button data-close="'+E(r.id)+'">Close shift</button>':photo('closing'))}
 function staffLayout(){if(isSales())$('nav').innerHTML='<button class="on" data-page="1">Nozzle shifts</button>';if(page<=1)$('add').textContent='＋ Start shift';
 if(page===1){let active=get('Reading').filter(r=>r.owner&&r.close===''&&r.date!==date());if(active.length)$('view').insertAdjacentHTML('afterbegin',panel('Open shifts from other dates',readings(active)))}
 if(page===7&&!isSales())$('view').insertAdjacentHTML('afterbegin',panel('Staff accounts','<button class="btn primary" id="manage">Manage staff</button>')+(localStorage.getItem(key)?panel('Previous browser ledger','<button id="migrate" class="btn">Import records from this browser</button>'):''));
-if(page===7)$('view').insertAdjacentHTML('beforeend','<small>Ledger exports contain entries only. The server database backup includes accounts and photos.</small>')}
+if(page===7&&staffUser.role==='admin')$('view').insertAdjacentHTML('beforeend',panel('Full station backup','<p>Save accounts, ledger entries and meter photos together. Keep this file private.</p><div class="actions"><button class="btn" id="fullbackup">Download full backup</button><label class="btn">Restore full backup<input hidden type="file" id="fullrestore" accept=".json"></label></div>'))}
 const photoInput='<label>Meter photo<input name="photo" type="file" accept="image/*" capture="environment" required></label>';
 function input(label,name,type='text',extra=''){return '<label>'+label+'<input name="'+name+'" type="'+type+'" '+extra+' required></label>'}
 function choices(label,name,opts){return '<label>'+label+'<select name="'+name+'" required>'+opts.map(([id,n])=>'<option value="'+E(id)+'">'+E(n)+'</option>').join('')+'</select></label>'}
@@ -36,5 +36,9 @@ async function staffAccounts(){accountList=await api('/users');let html='<div st
 $('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.photo){let blob=await api('/photo/'+encodeURIComponent(el.dataset.photo)+'/'+el.dataset.stage,undefined,true),url=URL.createObjectURL(blob);let d=document.createElement('dialog');d.innerHTML='<button class="btn">Close</button><img style="display:block;max-width:100%" alt="Meter photo">';d.querySelector('img').src=url;d.querySelector('button').onclick=()=>d.close();d.onclose=()=>{URL.revokeObjectURL(url);d.remove()};document.body.append(d);d.showModal()}if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
 lock();
 
-document.addEventListener('visibilitychange',()=>{if(endpoint&&staffUser&&!document.hidden&&!document.querySelector('dialog[open]'))refresh().catch(err=>console.warn(err.message))});
+document.addEventListener('visibilitychange',()=>{if(staffUser&&!document.hidden&&!document.querySelector('dialog[open]'))refresh().catch(err=>console.warn(err.message))});
 
+
+
+$('view').addEventListener('click',async e=>{if(e.target.id!=='fullbackup')return;try{const data=await DeviceStation.backup(),url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-full-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(err){alert(err.message)}});
+$('view').addEventListener('change',async e=>{if(e.target.id!=='fullrestore'||!e.target.files[0])return;try{const data=JSON.parse(await e.target.files[0].text());if(confirm('Replace accounts, records and photos on this computer with this backup and sign out?')){await DeviceStation.restore(data);await lock()}}catch(err){alert(err.message)}});
