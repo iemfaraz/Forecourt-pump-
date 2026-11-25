@@ -10,14 +10,24 @@ async function lock(){
   access.textContent='Opening station records…';
   try{
     const first=await DeviceStation.empty();
-    access.innerHTML='<h1 style="font-size:32px">'+(first?'Set up this station':'Staff sign-in')+'</h1><p>'+(first?'Create the administrator account for this browser on the station computer.':'Enter the username and password issued by your manager.')+'</p><form id="signin">'+(first?input('Administrator name','name','text','maxlength="100"'):'')+input('Username','login','text',first?'value="admin" autocomplete="username"':'autocomplete="username"')+input('Password','password','password',first?'minlength="12" maxlength="128" autocomplete="new-password"':'autocomplete="current-password"')+(first?input('Confirm password','confirm','password','autocomplete="new-password"'):'')+'<p class="err" role="alert"></p><button class="btn primary">'+(first?'Create administrator':'Sign in')+'</button></form><p><small>Accounts, readings and photos stay in this browser profile.</small></p>';
+    access.innerHTML='<h1 style="font-size:32px">Station login</h1><p>'+(first?'Register the first administrator on this station computer.':'Enter your staff username and password.')+'</p><form id="signin">'+input('Username','login','text','autocomplete="username"')+input('Password','password','password','autocomplete="current-password"')+'<p class="err" role="alert"></p><button class="btn primary">Log in</button> <button type="button" class="btn" id="register">Register</button></form><p><small>Accounts, readings and photos stay in this browser profile.</small></p>';
+    $('register').onclick=()=>{
+      const note=first?'Create the first administrator for this browser on the station computer.':'Request salesperson access on this station computer. A manager or administrator must approve your request.';
+      dialog(first?'Register station administrator':'Register as a salesperson','<p class="wide">'+note+'</p>'+input('Full name','name','text','maxlength="100"')+input('Username','login','text',(first?'value="admin" ':'')+'autocomplete="username"')+passwordFields(),first?'Create administrator':'Request access',async b=>{
+        checkPasswords(b);
+        if(first){await DeviceStation.setup(b);await refresh(true);access.replaceChildren();return}
+        await DeviceStation.register(b);
+        $('signin').reset();$('signin').elements.login.value=b.login;
+        $('signin').querySelector('.err').textContent='Registration submitted. You can log in after your manager approves your request.'
+      })
+    };
     if(!first){
       access.insertAdjacentHTML('beforeend','<button class="btn" id="recoverAdmin">Reset administrator password</button><p><small>Staff can ask an administrator or manager to reset their password.</small></p>');
       $('recoverAdmin').onclick=recoveryForm;
       if(location.hash==='#reset'){history.replaceState(null,'',location.pathname+location.search);recoveryForm()}
     }
     $('signin').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,btn=f.querySelector('button'),b=Object.fromEntries(new FormData(f));btn.disabled=true;
-      try{if(first){if(b.password!==b.confirm)throw Error('The passwords must match.');await DeviceStation.setup(b)}else await DeviceStation.login(b);
+      try{if(first)throw Error('Choose Register to set up the first administrator on this station computer.');await DeviceStation.login(b);
         await refresh(true);access.replaceChildren()
       }catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
   }catch{access.textContent='Browser storage is unavailable. Open this page in a normal browser window with site data enabled.'}
@@ -95,7 +105,7 @@ async function drawAccounts(){
   accountList=users.sort((a,b)=>a.name.localeCompare(b.name));
   const items=accountList.map(u=>{
     const allowed=staffUser.role==='admin'||u.role==='salesperson';
-    return [E(u.name),E(u.login),E(u.role),u.active?'Active':'Disabled','<button data-work="'+E(u.id)+'">Work record</button>',allowed?'<button data-edituser="'+E(u.id)+'">Edit</button> <button data-resetuser="'+E(u.id)+'">Reset password</button>':'']
+    return [E(u.name),E(u.login),E(u.role),u.pending?'Pending approval':u.active?'Active':'Disabled','<button data-work="'+E(u.id)+'">Work record</button>',allowed?'<button data-edituser="'+E(u.id)+'">'+(u.pending?'Review request':'Edit')+'</button> <button data-resetuser="'+E(u.id)+'">Reset password</button>':'']
   });
   $('view').innerHTML=panel('Station accounts',table(['Full name','Username','Role','Status','History','Actions'],items))
 }
@@ -115,7 +125,7 @@ function accountAction(id,reset){
     await refresh();await drawAccounts();
     const msg=document.createElement('p');msg.setAttribute('role','status');msg.textContent=(reset?'Password reset for ':'Account updated for ')+user.login+'.';$('view').prepend(msg)
   });
-  if(!reset){const f=d.querySelector('form');f.elements.name.value=user.name;f.elements.role.value=user.role;f.elements.status.value=user.active?'Active':'Disabled'}
+  if(!reset){const f=d.querySelector('form');f.elements.name.value=user.name;f.elements.role.value=user.role;f.elements.status.value=user.pending||user.active?'Active':'Disabled'}
 }
 $('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.photo)await showWorkPhoto(el.dataset.photo,el.dataset.stage);if(el.dataset.work)await workRecord(el.dataset.work);if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
 lock();
