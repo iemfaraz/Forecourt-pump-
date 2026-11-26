@@ -4,13 +4,17 @@ let staffUser=null,version=0,token='',accountList=[];
 const isSales=()=>staffUser?.role==='salesperson';
 const main=document.querySelector('main'), access=$('access');
 async function api(path,data){try{return await DeviceStation.api(path,data)}catch(err){if(err.expired){document.querySelectorAll('dialog[open]').forEach(d=>d.close());await lock()}throw err}}
+function applyStationName(name){
+  $('stationBrand').textContent=name;
+  document.title=name+' · Station ledger'
+}
 async function lock(){
   document.getElementById('reportFrame')?.remove();
   staffUser=null;rows=[];accountList=[];$('view').replaceChildren();$('nav').replaceChildren();$('modal').close();
   main.hidden=true;access.hidden=false;$('account').hidden=true;$('identity').textContent='Station access';
   access.textContent='Opening station records…';
   try{
-    const first=await DeviceStation.empty();
+    const first=await DeviceStation.empty();applyStationName(await DeviceStation.stationName());
     access.innerHTML='<h1 style="font-size:32px">Station login</h1><p>'+(first?'Register the first administrator on this station computer.':'Enter your staff username and password.')+'</p><form id="signin">'+input('Username','login','text','autocomplete="username"')+input('Password','password','password','autocomplete="current-password"')+'<p class="err" role="alert"></p><button class="btn primary">Log in</button> <button type="button" class="btn" id="register">Register</button></form><p><small>Accounts, readings and photos stay in this browser profile.</small></p>';
     $('register').onclick=()=>{
       const note=first?'Create the first administrator for this browser on the station computer.':'Request salesperson access on this station computer. A manager or administrator must approve your request.';
@@ -33,7 +37,7 @@ async function lock(){
       }catch(err){f.querySelector('.err').textContent=err.message}finally{btn.disabled=false}};
   }catch{access.textContent='Browser storage is unavailable. Open this page in a normal browser window with site data enabled.'}
 }
-async function refresh(first=false){let s=await api('/state');staffUser=s.user;version=s.revision;rows=s.rows;if(!isSales())accountList=await api('/users');if(first)progressOwner='';if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Saved on this station computer';render()}
+async function refresh(first=false){let s=await api('/state');applyStationName(s.stationName);staffUser=s.user;version=s.revision;rows=s.rows;if(!isSales())accountList=await api('/users');if(first)progressOwner='';if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Saved on this station computer';render()}
 async function staffSave(next){await api('/ledger',{revision:version,rows:next});await refresh()}
 $('account').onclick=async()=>{await api('/logout',{});await lock()};
 function shiftControls(r){let photo=stage=>'<button data-photo="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';return photo('opening')+(r.close===''?'<button data-close="'+E(r.id)+'">Close shift</button>':photo('closing'))}
@@ -48,16 +52,22 @@ if(isSales())$('nav').innerHTML='<button class="on" data-page="1">Nozzle shifts<
 if(page===1&&isSales())$('view').insertAdjacentHTML('afterbegin','<div class="head"><button class="btn" data-work="'+E(staffUser.id)+'">My work record</button></div>');
 if(page===1){let active=get('Reading').filter(r=>r.owner&&r.close===''&&r.date!==date());if(active.length)$('view').insertAdjacentHTML('afterbegin',panel('Open shifts from other dates',readings(active)))}
 if(page===7&&!isSales())$('view').insertAdjacentHTML('afterbegin',panel('Staff accounts','<button class="btn primary" id="manage">Manage staff</button>')+(localStorage.getItem(key)?panel('Previous browser ledger','<button id="migrate" class="btn">Import records from this browser</button>'):''));
+if(page===7&&staffUser.role==='admin')$('view').insertAdjacentHTML('afterbegin',panel('Station name','<p>'+E($('stationBrand').textContent)+'</p><button class="btn" id="renameStation">Change station name</button>'));
 if(page===7&&staffUser.role==='admin')$('view').insertAdjacentHTML('beforeend',panel('Full station backup','<p>Save accounts, ledger entries and meter photos together. Keep this file private.</p><div class="actions"><button class="btn" id="fullbackup">Download full backup</button><label class="btn">Restore full backup<input hidden type="file" id="fullrestore" accept=".json"></label></div>'))}
 const photoInput='<label>Meter photo<input name="photo" type="file" accept="image/*" capture="environment" required></label>';
 function input(label,name,type='text',extra=''){return '<label>'+label+'<input name="'+name+'" type="'+type+'" '+extra+' required></label>'}
 function choices(label,name,opts){return '<label>'+label+'<select name="'+name+'" required>'+opts.map(([id,n])=>'<option value="'+E(id)+'">'+E(n)+'</option>').join('')+'</select></label>'}
 function dialog(title,html,submit,action){let d=document.createElement('dialog');d.innerHTML='<form><div class="head"><h2>'+title+'</h2><button class="btn" type="button" data-cancel>Cancel</button></div><div class="grid">'+html+'</div><p class="err" role="alert"></p><button class="btn primary">'+submit+'</button></form>';document.body.append(d);d.onclose=()=>d.remove();d.querySelector('[data-cancel]').onclick=()=>d.close();d.querySelector('form').onsubmit=async e=>{e.preventDefault();let f=e.currentTarget,button=f.querySelector('.primary');button.disabled=true;try{await action(Object.fromEntries(new FormData(f)));d.close()}catch(err){f.querySelector('.err').textContent=err.message}finally{button.disabled=false}};d.showModal();return d}
 async function meterPhoto(file){if(!file?.size||file.size>25e6)throw Error('Choose a photo under 25 MB.');let url=URL.createObjectURL(file);try{let img=new Image;img.src=url;await img.decode();let scale=Math.min(1,1600/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));c.getContext('2d').drawImage(img,0,0,c.width,c.height);return c.toDataURL('image/jpeg',0.78)}finally{URL.revokeObjectURL(url)}}
-function batchShift(records){
+function attendantField(){
+  if(staffUser.role!=='admin')return '';
+  const staff=accountList.filter(u=>u.role==='salesperson'&&u.active&&!u.pending);
+  return choices('Salesperson','assignee',[[staffUser.id,staffUser.name+' (my shift)'],...staff.map(u=>[u.id,u.name+' ('+u.login+')'])])
+}
+function batchShift(records,selected){
   const closing=Boolean(records);
   const items=records||get('Nozzle').filter(n=>n.status==='Active');
-  const shared=closing?'':input('Business date','date','date','value="'+date()+'"')+choices('Shift','shift',shifts.map(s=>[s,s]))+input('Shift start time','startTime','time','value="'+new Date().toTimeString().slice(0,5)+'"');
+  const shared=closing?'<p class="wide">Salesperson: '+E(items[0].person)+'</p>':attendantField()+input('Business date','date','date','value="'+date()+'"')+choices('Shift','shift',shifts.map(s=>[s,s]))+input('Shift start time','startTime','time','value="'+new Date().toTimeString().slice(0,5)+'"');
   const sections=items.map((r,i)=>{
     const name=closing?nozzleName(r.nozzle):r.name;
     const meter=closing?input('Closing litres remaining','litres'+i,'number','min="0" max="'+Number(r.open)+'" step="any"'):input('Opening litres remaining','litres'+i,'number','min="0" step="any"');
@@ -71,25 +81,25 @@ function batchShift(records){
       const value=Number(b['litres'+i]),photo=await meterPhoto(b['photo'+i]);
       entries.push(closing?{id:r.id,close:value,photo}:{nozzle:r.id,open:value,rate:Number(b['rate'+i]),photo})
     }
-    await api(closing?'/close':'/start',{date:b.date,shift:b.shift,startTime:b.startTime,entries});
+    await api(closing?'/close':'/start',{date:b.date,shift:b.shift,startTime:b.startTime,assignee:b.assignee,entries});
     $('date').value=closing?items[0].date:b.date;await refresh()
   });
-  if(!closing)form.querySelector("[data-single]").onclick=()=>{form.close();shiftForm(null,true)}
+  if(!closing){const field=form.querySelector('[name=assignee]');if(field&&selected)field.value=selected;form.querySelector('[data-single]').onclick=()=>{form.close();shiftForm(null,true,field?.value)}}
 }
-function shiftForm(r,single=false){
+function shiftForm(r,single=false,selected){
   if(r?.batchId)return batchShift(get('Reading').filter(x=>x.batchId===r.batchId&&x.close===''));
   const active=get('Nozzle').filter(n=>n.status==='Active');
   if(!r&&!active.length)return alert('A manager must add an active nozzle first.');
   if(!r&&!single)return batchShift();
   let html;
   if(r){
-    html='<p class="wide">'+E(nozzleName(r.nozzle))+' · Start time: '+E(shiftTime(r))+' · Opening reading: '+fmt(r.open)+' L</p>';
+    html='<p class="wide">'+E(r.person)+' · '+E(nozzleName(r.nozzle))+' · Start time: '+E(shiftTime(r))+' · Opening reading: '+fmt(r.open)+' L</p>';
     if(!r.readingMode)html+=choices('Reading used at shift start','readingMode',[['remaining','Litres remaining'],['meter','Legacy cumulative meter']]);
     html+=input('Closing litres remaining','close','number','min="0" step="any" max="'+r.open+'"');
     if(!r.readingMode)html+=input('Returned to tank (L)','returned','number','min="0" step="any" value="0"');
     html+='<output class="wide" aria-live="polite"></output>';
   }else{
-    html=choices('Nozzle','nozzle',active.map(n=>[n.id,n.name]))+input('Business date','date','date','value="'+date()+'"')+
+    html=attendantField()+choices('Nozzle','nozzle',active.map(n=>[n.id,n.name]))+input('Business date','date','date','value="'+date()+'"')+
       choices('Shift','shift',shifts.map(s=>[s,s]))+input('Shift start time','startTime','time','value="'+new Date().toTimeString().slice(0,5)+'"')+input('Opening litres remaining','open','number','min="0" step="any"')+
       input('Sale rate (PKR/L)','rate','number','min="0" step="any"')+
       '<p class="wide">Record the fuel available at the start. If refilling, take the closing reading before the refill.</p>';
@@ -102,7 +112,7 @@ function shiftForm(r,single=false){
   });
   if(!r){
     const button=document.createElement('button');button.type='button';button.className='btn wide';button.textContent='Use all active nozzles';
-    d.querySelector('.grid').prepend(button);button.onclick=()=>{d.close();batchShift()};return
+    const field=d.querySelector('[name=assignee]');if(field&&selected)field.value=selected;d.querySelector('.grid').prepend(button);button.onclick=()=>{d.close();batchShift(null,field?.value)};return
   }
   const f=d.querySelector('form'),closing=f.elements.namedItem('close'),returned=f.elements.namedItem('returned');
   function preview(){
@@ -155,7 +165,7 @@ function accountAction(id,reset){
   });
   if(!reset){const f=d.querySelector('form');f.elements.name.value=user.name;f.elements.role.value=user.role;f.elements.status.value=user.pending||user.active?'Active':'Disabled'}
 }
-$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.workphoto)await showWorkPhoto(el.dataset.workphoto,el.dataset.stage);if(el.dataset.photo)await showWorkPhoto(el.dataset.photo,el.dataset.stage);if(el.dataset.work)await workRecord(el.dataset.work);if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
+$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.id==='renameStation'){dialog('Change station name',input('Station name','name','text','maxlength="80" value="'+E($('stationBrand').textContent)+'"'),'Save name',async b=>{await api('/station-name',b);await refresh()})}if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.workphoto)await showWorkPhoto(el.dataset.workphoto,el.dataset.stage);if(el.dataset.photo)await showWorkPhoto(el.dataset.photo,el.dataset.stage);if(el.dataset.work)await workRecord(el.dataset.work);if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
 lock();
 
 document.addEventListener('visibilitychange',()=>{if(staffUser&&!document.hidden&&!document.querySelector('dialog[open]'))refresh().catch(err=>console.warn(err.message))});
@@ -228,7 +238,7 @@ async function workRecord(id){
       frame.style.cssText='position:fixed;left:-200vw;top:0;width:1000px;height:600px;border:0';
       d.append(frame);
       const doc=frame.contentDocument;
-      doc.title=person.name+' · Work record';
+      doc.title=$('stationBrand').textContent+' · '+person.name+' · Work record';
       const css=doc.createElement('style');
       css.textContent='@page{size:A4 landscape;margin:10mm}dl{margin:0}dt{color:#555}dd{margin:0 0 3px}td{vertical-align:top}body{font:10pt Arial,sans-serif;color:#17212b}h1{font-size:18pt}table{width:100%;border-collapse:collapse;font-size:8pt}th,td{text-align:left;border:1px solid #aaa;padding:4px;overflow-wrap:anywhere}thead{display:table-header-group}tr{break-inside:avoid}.cards{display:flex;gap:2em;margin:1em 0}.cards>*{display:grid;gap:4px}';
       doc.head.append(css);

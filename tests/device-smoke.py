@@ -266,6 +266,40 @@ try:
     assert 'No shifts recorded' in element('.work-record [data-results]').text
     Select(element('.work-record [name=period]')).select_by_visible_text('All dates')
     assert '350,000' in element('.work-record tbody').text
+    element('.work-record [data-dismiss]').click()
+    element('[data-page="7"]').click()
+    element('#renameStation').click()
+    fill('dialog[open] [name=name]', 'Swat Fuel Station')
+    element('dialog[open] .primary').click()
+    wait.until(lambda d: element('#stationBrand').text=='Swat Fuel Station')
+    element('[data-page="1"]').click()
+    element('#add').click()
+    Select(element('dialog[open] [name=assignee]')).select_by_visible_text('Registration test (new-attendant)')
+    element('dialog[open] [data-single]').click()
+    assert 'new-attendant' in Select(element('dialog[open] [name=assignee]')).first_selected_option.text
+    element('dialog[open] button.wide').click()
+    Select(element('dialog[open] [name=shift]')).select_by_value('Night')
+    with TemporaryDirectory() as temp:
+        photo=Path(temp)/'meter.png'
+        photo.write_bytes(base64.b64decode(image))
+        for i in range(5):
+            fill(f'[name=litres{i}]','500')
+            fill(f'[name=rate{i}]','300')
+            element(f'[name=photo{i}]').send_keys(str(photo))
+        element('dialog[open] .primary').click()
+        element('button[data-close]').click()
+        assert 'Registration test' in element('dialog[open]').text
+        for i in range(5):
+            fill(f'[name=litres{i}]','400')
+            element(f'[name=photo{i}]').send_keys(str(photo))
+        element('dialog[open] .primary').click()
+        wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'dialog[open]')))
+    driver.refresh()
+    assert 'Swat Fuel Station' in element('#stationBrand').text
+    sign_in('new-attendant',password)
+    element('[data-work]').click()
+    record=element('.work-record tbody').text
+    assert all(value in record for value in ['Night','Test operator','Opened by','Closed by','150,000'])
     print("Verified tank stock and all-nozzle shift handover.")
     print("Verified admin setup, staff creation, role navigation, shift handover, persistence and photo retrieval.")
 finally:

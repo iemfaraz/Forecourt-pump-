@@ -87,7 +87,7 @@ function tankOptions(f,selected){
   const when=t=>t?E(new Date(t).toLocaleString()):'—';
     const done=r.close!=='';
     const photo=stage=>!r.owner?'':'<button data-workphoto="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';
-    const lines=[['Fuel',E(r.fuel)],['Opening L',fmt(r.open)],['Closing L',done?fmt(r.close):'—'],['Returns L',fmt(r.returned||0)],['Sold L',done?fmt(net(r)):'—'],['PKR/L',fmt(r.rate)],['Sales PKR',done?fmt(net(r)*r.rate):'—'],['Closed at',when(r.ended)],['Closed by',E(r.closedBy||'—')]];
+    const lines=[['Fuel',E(r.fuel)],['Opening L',fmt(r.open)],['Closing L',done?fmt(r.close):'—'],['Returns L',fmt(r.returned||0)],['Sold L',done?fmt(net(r)):'—'],['PKR/L',fmt(r.rate)],['Sales PKR',done?fmt(net(r)*r.rate):'—'],['Opened by',E(r.openedBy||r.person)],['Closed at',when(r.ended)],['Closed by',E(r.closedBy||'—')]];
     return '<dl class="nozzle-values">'+lines.map(([k,v])=>'<dt>'+k+'</dt><dd>'+v+'</dd>').join('')+'</dl>'+photo('opening')+(done?photo('closing'):'')
   }
 let progressPeriod='Daily',progressOwner='';
@@ -147,10 +147,10 @@ function printProgress(){
   document.getElementById('reportFrame')?.remove();
   const frame=document.createElement('iframe');frame.id='reportFrame';frame.title='Printable station report';
   frame.style.cssText='position:fixed;left:-200vw;width:1000px;height:600px;border:0';document.body.append(frame);
-  const doc=frame.contentDocument;doc.title='Forecourt '+progressPeriod+' progress '+date();
+  const doc=frame.contentDocument;doc.title=$('stationBrand').textContent+' '+progressPeriod+' progress '+date();
   const style=doc.createElement('style');
   style.textContent='@page{size:A4 landscape;margin:12mm}body{font:10pt Arial,sans-serif;color:#17212b}.cards{display:flex;gap:20px;margin:12px 0}.card{display:grid;gap:4px}table{border-collapse:collapse;width:100%}th,td{text-align:left;border:1px solid #aaa;padding:4px}thead{display:table-header-group}tr{break-inside:avoid}h3{break-after:avoid}td{vertical-align:top;overflow-wrap:anywhere}dl,dd{margin:0}dt{color:#52655c}dd{margin-bottom:3px}.scroll table{font-size:8pt}';
-  doc.head.append(style);const printed=$('progressReport').cloneNode(true);printed.querySelectorAll('button').forEach(b=>b.remove());doc.body.append(printed);frame.contentWindow.focus();frame.contentWindow.print()
+  doc.head.append(style);const stationHeading=doc.createElement('h1');stationHeading.textContent=$('stationBrand').textContent;doc.body.append(stationHeading);const printed=$('progressReport').cloneNode(true);printed.querySelectorAll('button').forEach(b=>b.remove());doc.body.append(printed);frame.contentWindow.focus();frame.contentWindow.print()
 }
 function render(){if(!staffUser)return;let dt=date(),a=rows.filter(r=>r.date===dt),past=rows.filter(r=>r.date<=dt),d=stats(a),p=stats(past),v='',t=typeForPage[page];
 $('nav').innerHTML=pages.map((n,i)=>'<button data-page="'+i+'" class="'+(i===page?'on':'')+'">'+n+'</button>').join('');
