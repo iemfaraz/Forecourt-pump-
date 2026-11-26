@@ -79,6 +79,11 @@ const DeviceStation=(()=>{
     return {id:crypto.randomUUID(),login,name,role,active:true,generation:0,...await credentials(b.password)}
   }
   const empty=()=>transaction(['users'],'readonly',s=>result(s('users').count()).then(n=>n===0));
+  const stationName=()=>transaction(['ledger'],'readonly',async s=>(await result(s('ledger').get('station-name')))||'Forecourt');
+  function validName(value){
+    assert(typeof value==='string'&&value.trim()&&value.trim().length<=80,'Enter a station name of 1 to 80 characters.');
+    return value.trim()
+  }
   async function setup(b){
     const user=await makeUser(b,'admin');
     await transaction(['users','ledger'],'readwrite',async s=>{
@@ -113,7 +118,8 @@ const DeviceStation=(()=>{
     return transaction(stores,write?'readwrite':'readonly',async s=>{
       await verify(s);const state=await result(s('ledger').get('station'));
       assert(state,'Set up this station first.');
-      if(path==='/state')return {revision:state.revision,user:current,rows:lead?state.rows:state.rows.filter(r=>r.type==='Nozzle'||r.owner===current.id).map(({cost,...r})=>r)};
+      if(path==='/station-name'){assert(current.role==='admin','Administrator access required.');s('ledger').put(validName(b.name),'station-name');return}
+      if(path==='/state')return {stationName:(await result(s('ledger').get('station-name')))||'Forecourt',revision:state.revision,user:current,rows:lead?state.rows:state.rows.filter(r=>r.type==='Nozzle'||r.owner===current.id).map(({cost,...r})=>r)};
       if(path.startsWith('/photo/')){const [, ,id,stage]=path.split('/'),r=state.rows.find(x=>x.id===id);
         assert(r&&(lead||r.owner===current.id),'Photo unavailable.');const photo=await result(s('photos').get(id+'/'+stage));assert(photo,'Photo unavailable.');return photo}
       if(path==='/ledger'){
@@ -125,6 +131,12 @@ const DeviceStation=(()=>{
       }else{
         assert(path==='/start'||path==='/close','Unknown operation.');
         const entries=b.entries||[b],opening=path==='/start';
+        let attendant=current;
+        if(opening&&b.assignee&&b.assignee!==current.id){
+          assert(current.role==='admin','Only an administrator may assign another salesperson.');
+          attendant=(await result(s('users').getAll())).find(u=>u.id===b.assignee&&u.role==='salesperson'&&u.active!==false&&!u.pending);
+          assert(attendant,'Select an active salesperson and try again.')
+        }
         const batchId=opening&&b.entries?crypto.randomUUID():null;
         assert(Array.isArray(entries)&&entries.length,'Include a reading for each nozzle.');
         if(opening&&b.entries){
@@ -145,11 +157,11 @@ const DeviceStation=(()=>{
         let r,stage;if(path==='/start'){
           const n=state.rows.find(x=>x.id===entry.nozzle&&x.type==='Nozzle'&&x.status==='Active');assert(n,'Select an active nozzle.');
           assert(/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.startTime),'Enter a valid shift start time.');
-          r={id:crypto.randomUUID(),batchId,tank:n.tank||defaultTank(n.fuel),startTime:entry.startTime,type:'Reading',readingMode:'remaining',owner:current.id,person:current.name,fuel:n.fuel,nozzle:n.id,date:entry.date,shift:entry.shift,open:entry.open,close:'',rate:entry.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
+          r={id:crypto.randomUUID(),batchId,tank:n.tank||defaultTank(n.fuel),startTime:entry.startTime,type:'Reading',readingMode:'remaining',owner:attendant.id,person:attendant.name,openedBy:current.name,openedById:current.id,fuel:n.fuel,nozzle:n.id,date:entry.date,shift:entry.shift,open:entry.open,close:'',rate:entry.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
           state.rows.push(r);stage='opening';
         }else{
           r=state.rows.find(x=>x.id===entry.id&&x.type==='Reading'&&x.owner);
-          assert(r&&(lead||r.owner===current.id)&&r.close==='','This shift cannot be closed.');if(!r.readingMode&&entry.readingMode==='remaining')r.readingMode='remaining';Object.assign(r,{close:entry.close,returned:r.readingMode==='remaining'?0:entry.returned,ended:new Date().toISOString(),closedBy:current.name});stage='closing'
+          assert(r&&(lead||r.owner===current.id)&&r.close==='','This shift cannot be closed.');if(!r.readingMode&&entry.readingMode==='remaining')r.readingMode='remaining';Object.assign(r,{close:entry.close,returned:r.readingMode==='remaining'?0:entry.returned,ended:new Date().toISOString(),closedBy:current.name,closedById:current.id});stage='closing'
         }
         s('photos').add(photo,r.id+'/'+stage)
         }
@@ -160,16 +172,16 @@ const DeviceStation=(()=>{
   }
   async function backup(){
     assert(current?.role==='admin','Administrator access required.');
-    const data=await transaction(stores,'readonly',async s=>{await verify(s);return {users:await result(s('users').getAll()),ledger:await result(s('ledger').get('station')),keys:await result(s('photos').getAllKeys()),blobs:await result(s('photos').getAll())}});
+    const data=await transaction(stores,'readonly',async s=>{await verify(s);return {stationName:await result(s('ledger').get('station-name')),users:await result(s('users').getAll()),ledger:await result(s('ledger').get('station')),keys:await result(s('photos').getAllKeys()),blobs:await result(s('photos').getAll())}});
     const photos=await Promise.all(data.blobs.map((blob,i)=>new Promise((resolve,reject)=>{const f=new FileReader;f.onload=()=>resolve([data.keys[i],f.result]);f.onerror=reject;f.readAsDataURL(blob)})));
-    return {format:'forecourt-device-1',users:data.users,rows:data.ledger.rows,photos}
+    return {format:'forecourt-device-1',stationName:data.stationName||'Forecourt',users:data.users,rows:data.ledger.rows,photos}
   }
   async function restore(b){
     assert(current?.role==='admin','Administrator access required.');assert(b.format==='forecourt-device-1'&&Array.isArray(b.users)&&Array.isArray(b.photos),'Select a full station backup.');validate(b.rows);
     assert(b.users.some(u=>u.role==='admin'&&u.active!==false)&&b.users.every(u=>typeof u.id==='string'&&typeof u.login==='string'&&['admin','manager','salesperson'].includes(u.role)&&/^[a-f0-9]{64}$/.test(u.hash)&&/^[a-f0-9]{32}$/.test(u.salt)),'Invalid account backup.');
     const photos=new Map(b.photos.map(([k,v])=>{assert(typeof k==='string'&&v.startsWith('data:image/jpeg;base64,'),'Invalid photo backup.');return [k,new Blob([Uint8Array.from(atob(v.slice(23)),c=>c.charCodeAt(0))],{type:'image/jpeg'})]}));
     for(const r of b.rows.filter(r=>r.owner))assert(b.users.some(u=>u.id===r.owner)&&photos.has(r.id+'/opening')&&(r.close===''||photos.has(r.id+'/closing')),'Backup is missing staff or photos.');
-    await transaction(stores,'readwrite',async s=>{await verify(s);const old=await result(s('ledger').get('station'));for(const n of stores)s(n).clear();for(const u of b.users)s('users').add(u,u.login);for(const [k,v] of photos)s('photos').add(v,k);s('ledger').put({revision:old.revision+1,rows:b.rows},'station')});current=null
+    await transaction(stores,'readwrite',async s=>{await verify(s);const old=await result(s('ledger').get('station'));for(const n of stores)s(n).clear();s('ledger').put(validName(b.stationName??'Forecourt'),'station-name');for(const u of b.users)s('users').add(u,u.login);for(const [k,v] of photos)s('photos').add(v,k);s('ledger').put({revision:old.revision+1,rows:b.rows},'station')});current=null
   }
-  return {empty,setup,register,login,api,backup,restore,recover}
+  return {empty,stationName,setup,register,login,api,backup,restore,recover}
 })();
