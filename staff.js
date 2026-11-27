@@ -85,7 +85,7 @@ if(page===1&&isSales())$('view').insertAdjacentHTML('afterbegin','<div class="he
 if(page===1){let active=get('Reading').filter(r=>r.owner&&r.close===''&&r.date!==date());if(active.length)$('view').insertAdjacentHTML('afterbegin',panel('Open shifts from other dates',readings(active)))}
 if(page===7&&!isSales())$('view').insertAdjacentHTML('afterbegin',panel('Staff accounts','<button class="btn primary" id="manage">Manage staff</button>')+(localStorage.getItem(key)?panel('Previous browser ledger','<button id="migrate" class="btn">Import records from this browser</button>'):''));
 if(page===7&&staffUser.role==='admin')$('view').insertAdjacentHTML('afterbegin',panel('WhatsApp integration','<p>'+(businessRelay()?'Business sender address saved on this station browser.':'Customer chat sharing is available. Business sender setup is optional.')+'</p><button class="btn" id="configureWhatsApp">Configure WhatsApp</button>')+panel('Station name','<p>'+E($('stationBrand').textContent)+'</p><button class="btn" id="renameStation">Change station name</button>'));
-if(page===7&&staffUser.role==='admin')$('view').insertAdjacentHTML('beforeend',panel('Full station backup','<p>Save accounts, ledger entries and meter photos together. Keep this file private.</p><div class="actions"><button class="btn" id="fullbackup">Download full backup</button><label class="btn">Restore full backup<input hidden type="file" id="fullrestore" accept=".json"></label></div>'))}
+if(page===7&&staffUser.role==='admin')$('view').insertAdjacentHTML('beforeend',panel('Full station backup','<p>Save accounts, ledger entries and meter photos together. Keep this file private.</p><div class="actions"><button class="btn" id="fullbackup">Download full backup</button><label class="btn">Restore full backup<input hidden type="file" id="fullrestore" accept=".json"></label></div>')+panel('Reset station','<p>Permanently erase all station data from this browser, including administrator accounts. Download a full backup above to keep a copy.</p><button class="btn" id="resetStation">Reset station…</button>'))}
 const photoInput='<label>Meter photo (optional)<input name="photo" type="file" accept="image/*" capture="environment"></label>';
 function input(label,name,type='text',extra=''){return '<label>'+label+'<input name="'+name+'" type="'+type+'" '+extra+' required></label>'}
 function choices(label,name,opts){return '<label>'+label+'<select name="'+name+'" required>'+opts.map(([id,n])=>'<option value="'+E(id)+'">'+E(n)+'</option>').join('')+'</select></label>'}
@@ -288,3 +288,17 @@ async function workRecord(id){
   };
   d.onclose=()=>d.remove();document.body.append(d);display();d.showModal()
 }
+
+const resetChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('forecourt-device-reset'):null;
+if(resetChannel)resetChannel.onmessage=()=>location.reload();
+$('view').addEventListener('click',e=>{
+  if(e.target.id!=='resetStation'||staffUser?.role!=='admin')return;
+  const revision=version;
+  dialog('Permanently reset station','<p>This erases all accounts, shifts, meter photos, tanks, nozzles, financial records and settings on this station browser. Afterwards, register a first administrator to start again.</p>'+input('Type RESET STATION to confirm','confirmation','text','autocomplete="off"'),'Erase all station data',async b=>{
+    await DeviceStation.resetStation(b.confirmation,revision);
+    localStorage.removeItem(key);
+    localStorage.removeItem(waSettingKey);
+    resetChannel?.postMessage('reset');
+    location.reload();
+  });
+});
