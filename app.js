@@ -45,8 +45,9 @@ function readings(entries){
   }
   const body=Array.from(groups.values(),members=>{
     const first=members[0],single=members.length===1,open=members.find(r=>r.close==='');
-    const control=single?edit(first):'<button data-shift-details="'+E(first.id)+'" aria-expanded="false">View nozzles</button>'+
+    let control=single?(page===1&&!open&&!first.owner&&staffUser?.role==='admin'?'':edit(first)):'<button data-shift-details="'+E(first.id)+'" aria-expanded="false">View nozzles</button>'+
       (open&&first.batchId?' <button data-close="'+E(open.id)+'">Close shift</button>':'');
+    if(page===1&&!open&&staffUser?.role==='admin')control+=' <button data-edit-completed="'+E(first.id)+'">Edit shift</button> <button data-delete-completed="'+E(first.id)+'">Delete shift</button>';
     return [E(first.date),E(first.shift),E(shiftTime(first)),E(first.person),single?E(nozzleName(first.nozzle)):members.length+' nozzles',
       fmt(sum(members,r=>r.open)),open?'On shift':fmt(sum(members,r=>r.close)),fmt(sum(members,r=>r.returned)),
       fmt(sum(members,net)),fmt(sum(members,r=>net(r)*r.rate)),control];
