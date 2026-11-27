@@ -123,7 +123,34 @@ const DeviceStation=(()=>{
       if(path==='/state')return {stationName:(await result(s('ledger').get('station-name')))||'Forecourt',revision:state.revision,user:current,rows:lead?state.rows:state.rows.filter(r=>r.type==='Nozzle'||r.owner===current.id).map(({cost,...r})=>r)};
       if(path.startsWith('/photo/')){const [, ,id,stage]=path.split('/'),r=state.rows.find(x=>x.id===id);
         assert(r&&(lead||r.owner===current.id),'Photo unavailable.');const photo=await result(s('photos').get(id+'/'+stage));assert(photo,'Photo unavailable.');return photo}
-      if(path==='/ledger'){
+      if(path==='/edit-completed'||path==='/delete-completed'){
+        assert(current.role==='admin','Administrator access required.');
+        assert(b.revision===state.revision,'Station records changed. Refresh and reopen the shift.');
+        const first=state.rows.find(r=>r.type==='Reading'&&r.id===b.id);
+        assert(first,'Shift no longer exists.');
+        const members=state.rows.filter(r=>r.type==='Reading'&&shiftGroupKey(r)===shiftGroupKey(first));
+        assert(members.every(r=>r.close!==''),'Close every nozzle before managing this shift.');
+        if(path==='/delete-completed'){
+          const ids=new Set(members.map(r=>r.id));
+          state.rows=state.rows.filter(r=>!ids.has(r.id));
+          for(const id of ids)for(const stage of ['opening','closing'])s('photos').delete(id+'/'+stage);
+        }else{
+          const edits=new Map(b.entries.map(entry=>[entry.id,entry]));
+          assert(edits.size===members.length&&b.entries.length===members.length&&members.every(r=>edits.has(r.id)),'Include every nozzle once.');
+          assert((!first.startTime&&b.startTime==='')||/^([01]\d|2[0-3]):[0-5]\d$/.test(b.startTime),'Enter a valid start time.');
+          const batchId=first.batchId||crypto.randomUUID();
+          for(const r of members){
+            const update=edits.get(r.id);
+            for(const key of ['open','close','rate','cost','returned']){
+              assert(Number.isFinite(update[key])&&update[key]>=0,'Enter a nonnegative number for each reading and price.');
+              r[key]=update[key];
+            }
+            assert(r.readingMode!=='remaining'||!r.returned,'Returns do not apply to remaining-litre readings.');
+            Object.assign(r,{batchId,date:b.date,startTime:b.startTime,shift:b.shift});
+          }
+        }
+        validate(state.rows);
+      }else if(path==='/ledger'){
         assert(lead&&b.revision===state.revision,'Refresh the ledger before saving.');validate(b.rows);
         const old=new Map(state.rows.filter(r=>r.owner).map(r=>[r.id,JSON.stringify(r)]));
         const managed=b.rows.filter(r=>r.owner);
