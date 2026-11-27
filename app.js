@@ -98,6 +98,52 @@ async function deleteTank(id){
   const next=rows.filter(r=>r.id!==id||used).map(r=>r.id===id?{...r,deleted:true}:r.type==='Nozzle'&&r.tank===id?{...r,tank:''}:r);
   await save(next);$('modal').close()
 }
+
+const waSettingKey='forecourt-whatsapp:'+new URL('.',location.href).pathname;
+function businessRelay(){
+  return localStorage.getItem(waSettingKey)||'';
+}
+function relayOrigin(value){
+  if(!value.trim())return '';
+  const url=new URL(value.trim());
+  if(url.protocol!=='https:'||!url.hostname.endsWith('.app.github.dev')||url.port||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw Error('Enter the HTTPS root address of your private Codespaces port.');
+  return url.origin;
+}
+function configureWhatsApp(){
+  const fields='<p>Customer profiles can always open WhatsApp with a draft. To use your station’s WhatsApp Business API sender, enter its private GitHub Codespaces address. Leave blank to configure later.</p><label>Business sender URL (optional)<input type="url" name="relay" placeholder="https://…-3100.app.github.dev" value="'+E(businessRelay())+'"></label><a href="https://github.com/iemfaraz/Forecourt-pump-/blob/main/WHATSAPP.md" target="_blank" rel="noopener noreferrer">Business sender setup guide</a>';
+  dialog('WhatsApp integration',fields,'Save settings',async b=>{
+    const url=relayOrigin(b.relay);
+    if(url)localStorage.setItem(waSettingKey,url);else localStorage.removeItem(waSettingKey);
+    render();
+  });
+}
+function customerWhatsApp(){
+  const person=get('Customer').find(p=>p.id===selectedCustomer);
+  if(!person)return;
+  let number=(person.phone||'').trim().replace(/[\s()-]/g,'').replace(/^\+/,'').replace(/^00/,'');
+  if(/^03\d{9}$/.test(number))number='92'+number.slice(1);
+  if(!/^[1-9]\d{7,14}$/.test(number)){
+    alert('Add the customer’s WhatsApp phone number with country code in Edit profile first.');
+    show('Customer',person);return;
+  }
+  const day=date(),activity=get('Customer debit').filter(r=>r.customer===person.id&&r.date<=day);
+  const current=activity.filter(r=>r.date===day);
+  const opening=sum(activity.filter(r=>r.date<day),r=>r.opening+r.buy-r.paid)+sum(current,r=>r.opening);
+  const credit=sum(current,r=>r.buy),paid=sum(current,r=>r.paid);
+  const values=[$('stationBrand').textContent,person.name,day,...[opening,credit,paid,opening+credit-paid].map(fmt)];
+  const message=values[0]+' · Credit update\nHello '+person.name+', here is your account update for '+day+'.\nOpening balance: PKR '+values[3]+'\nCredit added: PKR '+values[4]+'\nPayment received: PKR '+values[5]+'\nClosing balance: PKR '+values[6];
+  const chat='https://wa.me/'+number+'?text='+encodeURIComponent(message);
+  const actions=document.createElement('dialog');
+  actions.innerHTML='<h2>WhatsApp credit update</h2><p>To '+E(person.name)+' · +'+E(number)+'</p><pre style="white-space:pre-wrap">'+E(message)+'</pre><div class="actions"><button class="btn" type="button">Close</button><a class="btn primary" target="_blank" rel="noopener noreferrer" href="'+E(chat)+'">Open in WhatsApp</a></div>';
+  if(businessRelay()){
+    const link=document.createElement('a');link.className='btn';link.textContent='Review in Business sender';link.target='_blank';link.rel='noopener noreferrer';
+    link.href=relayOrigin(businessRelay())+'/#'+encodeURIComponent(JSON.stringify({to:number,values}));
+    actions.querySelector('.actions').append(link);
+  }
+  actions.querySelector('button').onclick=()=>actions.close();actions.onclose=()=>actions.remove();
+  document.body.append(actions);actions.showModal();
+}
+
 let selectedCustomer='';
 function customerReport(){
   const profiles=get('Customer').sort((a,b)=>a.name.localeCompare(b.name));
@@ -110,7 +156,7 @@ function customerReport(){
     balance+=r.opening+r.buy-r.paid;
     return [E(r.date),fmt(r.opening),fmt(r.buy),fmt(r.paid),fmt(balance),edit(r)]
   });
-  return panel('Customer profiles','<label>Customer <select id="customerProfile">'+profiles.map(p=>'<option value="'+E(p.id)+'" '+(p.id===person.id?'selected':'')+'>'+E(p.name)+'</option>').join('')+'</select></label><div class="actions"><button class="btn" data-id="'+E(person.id)+'">Edit profile</button><button class="btn" id="addCredit">Add daily credit</button><button class="btn" id="receivePayment">Receive payment</button><button class="btn" id="printCustomer">Print / Save PDF</button></div>')+
+  return panel('Customer profiles','<label>Customer <select id="customerProfile">'+profiles.map(p=>'<option value="'+E(p.id)+'" '+(p.id===person.id?'selected':'')+'>'+E(p.name)+'</option>').join('')+'</select></label><div class="actions"><button class="btn" data-id="'+E(person.id)+'">Edit profile</button><button class="btn" id="addCredit">Add daily credit</button><button class="btn" id="receivePayment">Receive payment</button><button class="btn" id="whatsAppCredit">Send credit update on WhatsApp</button><button class="btn" id="printCustomer">Print / Save PDF</button></div>')+
     '<section id="customerStatement"><h2>'+E(person.name)+' · Credit statement</h2><p>'+[person.phone,person.address].filter(Boolean).map(E).join(' · ')+'</p><p>All dates · PKR</p><div class="cards">'+card('Credit issued',fmt(sum(entries,r=>r.buy)))+card('Payments received',fmt(sum(entries,r=>r.paid)))+card('Balance due',fmt(balance))+'</div>'+table(['Date','Opening balance','Credit','Payment received','Running balance',''],activity,'No activity recorded for this customer.')+'</section>'
 }
 function customerEntry(payment){
@@ -240,5 +286,5 @@ if(kind==='Customer debit'){const old=rows.find(x=>x.id===editing);r.customer=ol
 if(kind==='Reading')r.fuel=get('Nozzle').find(n=>n.id===r.nozzle).fuel;await save([...rows.filter(x=>x.id!==r.id).map(x=>kind==='Customer'&&x.customer===r.id?{...x,name:r.name}:x),r]);if(r.date){$('date').value=r.date;render()}$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('remove').onclick=async()=>{if(kind==='Customer'&&get('Customer debit').some(x=>x.customer===editing)){$('err').textContent='Keep this customer profile while it has ledger entries.';return}if(kind==='Tank'){try{await deleteTank(editing)}catch(err){$('err').textContent=err.message}return}if(confirm('Delete this entry and recalculate balances?'))try{await save(rows.filter(x=>x.id!==editing));$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('date').onchange=()=>{if(date())render()};$('add').onclick=()=>page===8?newAccount():page===4?show('Customer'):page===6?window.print():show(typeForPage[page]);$('nav').onclick=e=>{if(e.target.dataset.page!==undefined){page=Number(e.target.dataset.page);render()}};
-$('view').onclick=e=>{if(e.target.dataset.deleteTank)deleteTank(e.target.dataset.deleteTank).catch(err=>alert(err.message));if(e.target.id==='addCredit')customerEntry(false);if(e.target.id==='receivePayment')customerEntry(true);if(e.target.id==='printCustomer')printProgress('customerStatement');if(e.target.hasAttribute('data-shift-details'))toggleNozzleDetails(e.target);if(e.target.id==='viewProgress'){$('progressReport').focus();$('progressReport').scrollIntoView({block:'start'})}if(e.target.hasAttribute('data-all-shift')){if(get('Nozzle').some(n=>n.status==='Active'))batchShift();else alert('Add an active nozzle in Setup first.')} if(e.target.id==='printProgress')printProgress();if(e.target.id==='addTank')show('Tank');if(e.target.id==='addFuel')show('Fuel type');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
+$('view').onclick=e=>{if(e.target.id==='whatsAppCredit')customerWhatsApp();if(e.target.id==='configureWhatsApp'&&staffUser.role==='admin')configureWhatsApp();if(e.target.dataset.deleteTank)deleteTank(e.target.dataset.deleteTank).catch(err=>alert(err.message));if(e.target.id==='addCredit')customerEntry(false);if(e.target.id==='receivePayment')customerEntry(true);if(e.target.id==='printCustomer')printProgress('customerStatement');if(e.target.hasAttribute('data-shift-details'))toggleNozzleDetails(e.target);if(e.target.id==='viewProgress'){$('progressReport').focus();$('progressReport').scrollIntoView({block:'start'})}if(e.target.hasAttribute('data-all-shift')){if(get('Nozzle').some(n=>n.status==='Active'))batchShift();else alert('Add an active nozzle in Setup first.')} if(e.target.id==='printProgress')printProgress();if(e.target.id==='addTank')show('Tank');if(e.target.id==='addFuel')show('Fuel type');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
 $('view').onchange=async e=>{if(e.target.id==='customerProfile'){selectedCustomer=e.target.value;render();return}if(e.target.id==='progressPeriod'||e.target.id==='progressOwner'){progressPeriod=$('progressPeriod').value;progressOwner=$('progressOwner').value;$('progressReport').innerHTML=progressReport();return}if(e.target.id==='restore'&&e.target.files[0])try{let next=JSON.parse(await e.target.files[0].text());if(!Array.isArray(next))throw Error('Invalid backup.');upgradeRecords(next);validate(next);if(confirm('Replace all station records with this backup?'))await save(next)}catch(err){alert(err.message)}};
