@@ -88,7 +88,7 @@ const DeviceStation=(()=>{
     const user=await makeUser(b,'admin');
     await transaction(['users','ledger'],'readwrite',async s=>{
       assert(await result(s('users').count())===0,'An administrator already exists. Reload and sign in.');
-      s('users').add(user,user.login);s('ledger').add({revision:1,rows:initial()},'station')
+      s('users').add(user,user.login);s('ledger').add({revision:1,profileSchema:1,rows:initial()},'station')
     });current=visible(user)
   }
   async function register(b){
@@ -114,10 +114,11 @@ const DeviceStation=(()=>{
       if(b){assert(b.role==='salesperson'||(current.role==='admin'&&['manager','admin'].includes(b.role)),'Role unavailable.');const user=await makeUser(b,b.role);
         await transaction(['users'],'readwrite',async s=>{await verify(s);assert(!await result(s('users').get(user.login)),'Username already exists.');s('users').add(user,user.login)})}
       return transaction(['users'],'readonly',async s=>{await verify(s);return (await result(s('users').getAll())).map(visible)})}
-    const write=b!==undefined;
+    const write=b!==undefined||path==='/state';
     return transaction(stores,write?'readwrite':'readonly',async s=>{
       await verify(s);const state=await result(s('ledger').get('station'));
       assert(state,'Set up this station first.');
+      if(!state.profileSchema){upgradeRecords(state.rows);state.profileSchema=1;state.revision++;s('ledger').put(state,'station')}
       if(path==='/station-name'){assert(current.role==='admin','Administrator access required.');s('ledger').put(validName(b.name),'station-name');return}
       if(path==='/state')return {stationName:(await result(s('ledger').get('station-name')))||'Forecourt',revision:state.revision,user:current,rows:lead?state.rows:state.rows.filter(r=>r.type==='Nozzle'||r.owner===current.id).map(({cost,...r})=>r)};
       if(path.startsWith('/photo/')){const [, ,id,stage]=path.split('/'),r=state.rows.find(x=>x.id===id);
@@ -152,18 +153,21 @@ const DeviceStation=(()=>{
         }
         for(const item of entries){
           const entry=b.entries&&opening?{...item,date:b.date,shift:b.shift,startTime:b.startTime}:item;
-        assert(/^data:image\/jpeg;base64,/.test(entry.photo),'Attach the meter photo.');
-        const raw=atob(entry.photo.slice(23)),photo=new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:'image/jpeg'});
+        let photo=null;
+        if(entry.photo){
+          assert(/^data:image\/jpeg;base64,/.test(entry.photo),'Choose a valid meter photo.');
+          const raw=atob(entry.photo.slice(23));photo=new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:'image/jpeg'});
+        }
         let r,stage;if(path==='/start'){
           const n=state.rows.find(x=>x.id===entry.nozzle&&x.type==='Nozzle'&&x.status==='Active');assert(n,'Select an active nozzle.');
           assert(/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.startTime),'Enter a valid shift start time.');
-          r={id:crypto.randomUUID(),batchId,tank:n.tank||defaultTank(n.fuel),startTime:entry.startTime,type:'Reading',readingMode:'remaining',owner:attendant.id,person:attendant.name,openedBy:current.name,openedById:current.id,fuel:n.fuel,nozzle:n.id,date:entry.date,shift:entry.shift,open:entry.open,close:'',rate:entry.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
+          r={id:crypto.randomUUID(),batchId,tank:n.tank||'',startTime:entry.startTime,type:'Reading',readingMode:'remaining',owner:attendant.id,person:attendant.name,openedBy:current.name,openedById:current.id,fuel:n.fuel,nozzle:n.id,date:entry.date,shift:entry.shift,open:entry.open,close:'',rate:entry.rate,cost:n.cost||0,returned:0,started:new Date().toISOString()};
           state.rows.push(r);stage='opening';
         }else{
           r=state.rows.find(x=>x.id===entry.id&&x.type==='Reading'&&x.owner);
           assert(r&&(lead||r.owner===current.id)&&r.close==='','This shift cannot be closed.');if(!r.readingMode&&entry.readingMode==='remaining')r.readingMode='remaining';Object.assign(r,{close:entry.close,returned:r.readingMode==='remaining'?0:entry.returned,ended:new Date().toISOString(),closedBy:current.name,closedById:current.id});stage='closing'
         }
-        s('photos').add(photo,r.id+'/'+stage)
+        r[stage+'Photo']=Boolean(photo);if(photo)s('photos').add(photo,r.id+'/'+stage)
         }
         validate(state.rows);
       }
@@ -177,11 +181,11 @@ const DeviceStation=(()=>{
     return {format:'forecourt-device-1',stationName:data.stationName||'Forecourt',users:data.users,rows:data.ledger.rows,photos}
   }
   async function restore(b){
-    assert(current?.role==='admin','Administrator access required.');assert(b.format==='forecourt-device-1'&&Array.isArray(b.users)&&Array.isArray(b.photos),'Select a full station backup.');validate(b.rows);
+    assert(current?.role==='admin','Administrator access required.');assert(b.format==='forecourt-device-1'&&Array.isArray(b.users)&&Array.isArray(b.photos),'Select a full station backup.');upgradeRecords(b.rows);validate(b.rows);
     assert(b.users.some(u=>u.role==='admin'&&u.active!==false)&&b.users.every(u=>typeof u.id==='string'&&typeof u.login==='string'&&['admin','manager','salesperson'].includes(u.role)&&/^[a-f0-9]{64}$/.test(u.hash)&&/^[a-f0-9]{32}$/.test(u.salt)),'Invalid account backup.');
     const photos=new Map(b.photos.map(([k,v])=>{assert(typeof k==='string'&&v.startsWith('data:image/jpeg;base64,'),'Invalid photo backup.');return [k,new Blob([Uint8Array.from(atob(v.slice(23)),c=>c.charCodeAt(0))],{type:'image/jpeg'})]}));
-    for(const r of b.rows.filter(r=>r.owner))assert(b.users.some(u=>u.id===r.owner)&&photos.has(r.id+'/opening')&&(r.close===''||photos.has(r.id+'/closing')),'Backup is missing staff or photos.');
-    await transaction(stores,'readwrite',async s=>{await verify(s);const old=await result(s('ledger').get('station'));for(const n of stores)s(n).clear();s('ledger').put(validName(b.stationName??'Forecourt'),'station-name');for(const u of b.users)s('users').add(u,u.login);for(const [k,v] of photos)s('photos').add(v,k);s('ledger').put({revision:old.revision+1,rows:b.rows},'station')});current=null
+    for(const r of b.rows.filter(r=>r.owner))assert(b.users.some(u=>u.id===r.owner)&&(r.openingPhoto===false||photos.has(r.id+'/opening'))&&(r.close===''||r.closingPhoto===false||photos.has(r.id+'/closing')),'Backup is missing staff or photos.');
+    await transaction(stores,'readwrite',async s=>{await verify(s);const old=await result(s('ledger').get('station'));for(const n of stores)s(n).clear();s('ledger').put(validName(b.stationName??'Forecourt'),'station-name');for(const u of b.users)s('users').add(u,u.login);for(const [k,v] of photos)s('photos').add(v,k);s('ledger').put({revision:old.revision+1,profileSchema:1,rows:b.rows},'station')});current=null
   }
   return {empty,stationName,setup,register,login,api,backup,restore,recover}
 })();
