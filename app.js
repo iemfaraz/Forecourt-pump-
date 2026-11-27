@@ -118,7 +118,7 @@ function configureWhatsApp(){
     render();
   });
 }
-function customerWhatsApp(){
+function customerWhatsApp(pdf=false){
   const person=get('Customer').find(p=>p.id===selectedCustomer);
   if(!person)return;
   let number=(person.phone||'').trim().replace(/[\s()-]/g,'').replace(/^\+/,'').replace(/^00/,'');
@@ -128,6 +128,18 @@ function customerWhatsApp(){
     show('Customer',person);return;
   }
   const day=date(),activity=get('Customer debit').filter(r=>r.customer===person.id&&r.date<=day);
+  if(pdf){
+    const file=creditPdfFile($('stationBrand').textContent,person,day,activity.sort((a,b)=>a.date.localeCompare(b.date)));
+    const url=URL.createObjectURL(file),d=document.createElement('dialog');
+    d.innerHTML='<h2>Share credit statement PDF</h2><p>'+E(person.name)+' · +'+E(number)+' · Through '+E(day)+'</p><p>Choose WhatsApp and select the customer, or download the PDF and attach it in their chat.</p><div class="actions"><a class="btn" data-download>Download PDF</a><a class="btn" href="https://wa.me/'+number+'" target="_blank" rel="noopener noreferrer">Open customer chat</a><button class="btn" data-dismiss>Close</button></div><p role="status"></p>';
+    const download=d.querySelector('[data-download]');download.href=url;download.download=file.name;
+    if(navigator.canShare?.({files:[file]})){
+      const share=document.createElement('button');share.className='btn primary';share.textContent='Share PDF…';download.before(share);
+      share.onclick=async()=>{try{await navigator.share({files:[file]})}catch(err){if(err.name!=='AbortError')d.querySelector('[role=status]').textContent='Download the PDF and attach it in the customer chat.'}};
+    }
+    d.querySelector('[data-dismiss]').onclick=()=>d.close();d.onclose=()=>{URL.revokeObjectURL(url);d.remove()};
+    document.body.append(d);d.showModal();return;
+  }
   const current=activity.filter(r=>r.date===day);
   const opening=sum(activity.filter(r=>r.date<day),r=>r.opening+r.buy-r.paid)+sum(current,r=>r.opening);
   const credit=sum(current,r=>r.buy),paid=sum(current,r=>r.paid);
@@ -157,7 +169,7 @@ function customerReport(){
     balance+=r.opening+r.buy-r.paid;
     return [E(r.date),fmt(r.opening),fmt(r.buy),fmt(r.paid),fmt(balance),edit(r)]
   });
-  return panel('Customer profiles','<label>Customer <select id="customerProfile">'+profiles.map(p=>'<option value="'+E(p.id)+'" '+(p.id===person.id?'selected':'')+'>'+E(p.name)+'</option>').join('')+'</select></label><div class="actions"><button class="btn" data-id="'+E(person.id)+'">Edit profile</button><button class="btn" id="addCredit">Add daily credit</button><button class="btn" id="receivePayment">Receive payment</button><button class="btn" id="whatsAppCredit">Send credit update on WhatsApp</button><button class="btn" id="printCustomer">Print / Save PDF</button></div>')+
+  return panel('Customer profiles','<label>Customer <select id="customerProfile">'+profiles.map(p=>'<option value="'+E(p.id)+'" '+(p.id===person.id?'selected':'')+'>'+E(p.name)+'</option>').join('')+'</select></label><div class="actions"><button class="btn" data-id="'+E(person.id)+'">Edit profile</button><button class="btn" id="addCredit">Add daily credit</button><button class="btn" id="receivePayment">Receive payment</button><button class="btn" id="whatsAppCredit">Send credit update on WhatsApp</button><button class="btn" id="whatsAppPdf">Share PDF on WhatsApp</button><button class="btn" id="printCustomer">Print / Save PDF</button></div>')+
     '<section id="customerStatement"><h2>'+E(person.name)+' · Credit statement</h2><p>'+[person.phone,person.address].filter(Boolean).map(E).join(' · ')+'</p><p>All dates · PKR</p><div class="cards">'+card('Credit issued',fmt(sum(entries,r=>r.buy)))+card('Payments received',fmt(sum(entries,r=>r.paid)))+card('Balance due',fmt(balance))+'</div>'+table(['Date','Opening balance','Credit','Payment received','Running balance',''],activity,'No activity recorded for this customer.')+'</section>'
 }
 function customerEntry(payment){
@@ -287,5 +299,5 @@ if(kind==='Customer debit'){const old=rows.find(x=>x.id===editing);r.customer=ol
 if(kind==='Reading')r.fuel=get('Nozzle').find(n=>n.id===r.nozzle).fuel;await save([...rows.filter(x=>x.id!==r.id).map(x=>kind==='Customer'&&x.customer===r.id?{...x,name:r.name}:x),r]);if(r.date){$('date').value=r.date;render()}$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('remove').onclick=async()=>{if(kind==='Customer'&&get('Customer debit').some(x=>x.customer===editing)){$('err').textContent='Keep this customer profile while it has ledger entries.';return}if(kind==='Tank'){try{await deleteTank(editing)}catch(err){$('err').textContent=err.message}return}if(confirm('Delete this entry and recalculate balances?'))try{await save(rows.filter(x=>x.id!==editing));$('modal').close()}catch(e){$('err').textContent=e.message}};
 $('date').onchange=()=>{if(date())render()};$('add').onclick=()=>page===8?newAccount():page===4?show('Customer'):page===6?window.print():show(typeForPage[page]);$('nav').onclick=e=>{if(e.target.dataset.page!==undefined){page=Number(e.target.dataset.page);render()}};
-$('view').onclick=e=>{if(e.target.id==='whatsAppCredit')customerWhatsApp();if(e.target.id==='configureWhatsApp'&&staffUser.role==='admin')configureWhatsApp();if(e.target.dataset.deleteTank)deleteTank(e.target.dataset.deleteTank).catch(err=>alert(err.message));if(e.target.id==='addCredit')customerEntry(false);if(e.target.id==='receivePayment')customerEntry(true);if(e.target.id==='printCustomer')printProgress('customerStatement');if(e.target.hasAttribute('data-shift-details'))toggleNozzleDetails(e.target);if(e.target.id==='viewProgress'){$('progressReport').focus();$('progressReport').scrollIntoView({block:'start'})}if(e.target.hasAttribute('data-all-shift')){if(get('Nozzle').some(n=>n.status==='Active'))batchShift();else alert('Add an active nozzle in Setup first.')} if(e.target.id==='printProgress')printProgress();if(e.target.id==='addTank')show('Tank');if(e.target.id==='addFuel')show('Fuel type');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
+$('view').onclick=e=>{if(e.target.id==='whatsAppPdf')customerWhatsApp(true);if(e.target.id==='whatsAppCredit')customerWhatsApp();if(e.target.id==='configureWhatsApp'&&staffUser.role==='admin')configureWhatsApp();if(e.target.dataset.deleteTank)deleteTank(e.target.dataset.deleteTank).catch(err=>alert(err.message));if(e.target.id==='addCredit')customerEntry(false);if(e.target.id==='receivePayment')customerEntry(true);if(e.target.id==='printCustomer')printProgress('customerStatement');if(e.target.hasAttribute('data-shift-details'))toggleNozzleDetails(e.target);if(e.target.id==='viewProgress'){$('progressReport').focus();$('progressReport').scrollIntoView({block:'start'})}if(e.target.hasAttribute('data-all-shift')){if(get('Nozzle').some(n=>n.status==='Active'))batchShift();else alert('Add an active nozzle in Setup first.')} if(e.target.id==='printProgress')printProgress();if(e.target.id==='addTank')show('Tank');if(e.target.id==='addFuel')show('Fuel type');if(e.target.dataset.id){let r=rows.find(r=>r.id===e.target.dataset.id);show(r.type,r)}if(e.target.id==='backup'){let url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='forecourt-'+date()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}};
 $('view').onchange=async e=>{if(e.target.id==='customerProfile'){selectedCustomer=e.target.value;render();return}if(e.target.id==='progressPeriod'||e.target.id==='progressOwner'){progressPeriod=$('progressPeriod').value;progressOwner=$('progressOwner').value;$('progressReport').innerHTML=progressReport();return}if(e.target.id==='restore'&&e.target.files[0])try{let next=JSON.parse(await e.target.files[0].text());if(!Array.isArray(next))throw Error('Invalid backup.');upgradeRecords(next);validate(next);if(confirm('Replace all station records with this backup?'))await save(next)}catch(err){alert(err.message)}};
