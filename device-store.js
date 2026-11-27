@@ -214,5 +214,16 @@ const DeviceStation=(()=>{
     for(const r of b.rows.filter(r=>r.owner))assert(b.users.some(u=>u.id===r.owner)&&(r.openingPhoto===false||photos.has(r.id+'/opening'))&&(r.close===''||r.closingPhoto===false||photos.has(r.id+'/closing')),'Backup is missing staff or photos.');
     await transaction(stores,'readwrite',async s=>{await verify(s);const old=await result(s('ledger').get('station'));for(const n of stores)s(n).clear();s('ledger').put(validName(b.stationName??'Forecourt'),'station-name');for(const u of b.users)s('users').add(u,u.login);for(const [k,v] of photos)s('photos').add(v,k);s('ledger').put({revision:old.revision+1,profileSchema:1,rows:b.rows},'station')});current=null
   }
-  return {empty,stationName,setup,register,login,api,backup,restore,recover}
+  async function resetStation(confirmation,revision){
+    await transaction(stores,'readwrite',async s=>{
+      const actor=await verify(s);
+      assert(actor.role==='admin','Administrator access required.');
+      assert(confirmation==='RESET STATION','Type RESET STATION to confirm.');
+      const ledger=await result(s('ledger').get('station'));
+      assert(ledger?.revision===revision,'Station records changed. Refresh and review before resetting.');
+      for(const name of stores)s(name).clear();
+    });
+    current=null;
+  }
+  return {empty,stationName,setup,register,login,api,backup,restore,recover,resetStation}
 })();
