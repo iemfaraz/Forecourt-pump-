@@ -268,6 +268,27 @@ try:
     assert '350,000' in element('.work-record tbody').text
     element('.work-record [data-dismiss]').click()
     element('[data-page="7"]').click()
+    element('[data-page="4"]').click()
+    element('#add').click()
+    fill('#fields [name=name]', 'Customer One')
+    fill('#fields [name=phone]', '12345')
+    element('#form .primary').click()
+    element('#addCredit').click()
+    fill('dialog[open] [name=amount]', '1500')
+    element('dialog[open] .primary').click()
+    wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'dialog[open]')))
+    element('#receivePayment').click()
+    fill('dialog[open] [name=amount]', '500')
+    element('dialog[open] .primary').click()
+    wait.until(lambda d:'1,000' in element('#customerStatement').text)
+    assert len(driver.find_elements(By.CSS_SELECTOR,'#customerStatement tbody tr'))==2
+    element('#printCustomer').click()
+    assert 'Customer One' in driver.execute_script("return document.querySelector('#reportFrame').contentDocument.body.innerText")
+    element('[data-page="7"]').click()
+    tank=next(row for row in driver.find_elements(By.CSS_SELECTOR,'tbody tr') if 'Premium underground' in row.text)
+    tank.find_element(By.CSS_SELECTOR,'[data-delete-tank]').click()
+    driver.switch_to.alert.accept()
+    wait.until(lambda d:'Premium underground' not in element('#view').text)
     element('#renameStation').click()
     fill('dialog[open] [name=name]', 'Swat Fuel Station')
     element('dialog[open] .primary').click()
@@ -285,13 +306,11 @@ try:
         for i in range(5):
             fill(f'[name=litres{i}]','500')
             fill(f'[name=rate{i}]','300')
-            element(f'[name=photo{i}]').send_keys(str(photo))
         element('dialog[open] .primary').click()
         element('button[data-close]').click()
         assert 'Registration test' in element('dialog[open]').text
         for i in range(5):
             fill(f'[name=litres{i}]','400')
-            element(f'[name=photo{i}]').send_keys(str(photo))
         element('dialog[open] .primary').click()
         wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'dialog[open]')))
     driver.refresh()
@@ -300,6 +319,7 @@ try:
     element('[data-work]').click()
     record=element('.work-record tbody').text
     assert all(value in record for value in ['Night','Test operator','Opened by','Closed by','150,000'])
+    assert not driver.find_elements(By.CSS_SELECTOR,'.work-record [data-workphoto]')
     print("Verified tank stock and all-nozzle shift handover.")
     print("Verified admin setup, staff creation, role navigation, shift handover, persistence and photo retrieval.")
 finally:
