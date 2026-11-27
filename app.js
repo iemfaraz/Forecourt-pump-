@@ -144,7 +144,8 @@ function customerWhatsApp(pdf=false){
   const opening=sum(activity.filter(r=>r.date<day),r=>r.opening+r.buy-r.paid)+sum(current,r=>r.opening);
   const credit=sum(current,r=>r.buy),paid=sum(current,r=>r.paid);
   const values=[$('stationBrand').textContent,person.name,day,...[opening,credit,paid,opening+credit-paid].map(fmt)];
-  const message=values[0]+' · Credit update\nHello '+person.name+', here is your account update for '+day+'.\nOpening balance: PKR '+values[3]+'\nCredit added: PKR '+values[4]+'\nPayment received: PKR '+values[5]+'\nClosing balance: PKR '+values[6];
+  const slip=creditSlip(person,day,activity);
+  const message=[values[0],'CUSTOMER CREDIT SLIP · '+slip.ref,'Customer: '+person.name,'Date: '+day,'','Opening balance today: PKR '+values[3],'Credit added today: PKR '+values[4],'Paid today: PKR '+values[5],'','Total credit issued: PKR '+fmt(slip.credit),'Total paid: PKR '+fmt(slip.paid),slip.label+': PKR '+fmt(Math.abs(slip.balance))].join('\n');
   const chat='https://wa.me/'+number+'?text='+encodeURIComponent(message);
   const actions=document.createElement('dialog');
   actions.innerHTML='<h2>WhatsApp credit update</h2><p>To '+E(person.name)+' · +'+E(number)+'</p><pre style="white-space:pre-wrap">'+E(message)+'</pre><div class="actions"><button class="btn" type="button">Close</button><a class="btn primary" target="_blank" rel="noopener noreferrer" href="'+E(chat)+'">Open in WhatsApp</a></div>';
@@ -163,14 +164,14 @@ function customerReport(){
   const person=profiles.find(r=>r.id===selectedCustomer)||profiles[0];
   if(!person)return panel('Customer profiles','<p>Add your first customer to record credit and payments.</p>');
   selectedCustomer=person.id;
-  const entries=get('Customer debit').filter(r=>r.customer===person.id).sort((a,b)=>a.date.localeCompare(b.date));
+  const slip=creditSlip(person,date(),get('Customer debit').filter(r=>r.customer===person.id)),entries=slip.items;
   let balance=0;
   const activity=entries.map(r=>{
     balance+=r.opening+r.buy-r.paid;
     return [E(r.date),fmt(r.opening),fmt(r.buy),fmt(r.paid),fmt(balance),edit(r)]
   });
   return panel('Customer profiles','<label>Customer <select id="customerProfile">'+profiles.map(p=>'<option value="'+E(p.id)+'" '+(p.id===person.id?'selected':'')+'>'+E(p.name)+'</option>').join('')+'</select></label><div class="actions"><button class="btn" data-id="'+E(person.id)+'">Edit profile</button><button class="btn" id="addCredit">Add daily credit</button><button class="btn" id="receivePayment">Receive payment</button><button class="btn" id="whatsAppCredit">Send credit update on WhatsApp</button><button class="btn" id="whatsAppPdf">Share PDF on WhatsApp</button><button class="btn" id="printCustomer">Print / Save PDF</button></div>')+
-    '<section id="customerStatement"><h2>'+E(person.name)+' · Credit statement</h2><p>'+[person.phone,person.address].filter(Boolean).map(E).join(' · ')+'</p><p>All dates · PKR</p><div class="cards">'+card('Credit issued',fmt(sum(entries,r=>r.buy)))+card('Payments received',fmt(sum(entries,r=>r.paid)))+card('Balance due',fmt(balance))+'</div>'+table(['Date','Opening balance','Credit','Payment received','Running balance',''],activity,'No activity recorded for this customer.')+'</section>'
+    '<section id="customerStatement"><div class="sliphead"><strong>'+E($('stationBrand').textContent)+'</strong><span>'+E(slip.ref)+'</span></div><h2>Customer credit slip</h2><p>Statement through '+E(date())+' · PKR</p><div class="slipcustomer">Customer<br><b>'+E(person.name)+'</b><br>'+[person.phone,person.address].filter(Boolean).map(E).join(' · ')+'</div><div class="cards">'+card('Opening balances',fmt(slip.opening))+card('Total credit issued',fmt(slip.credit))+card('Total paid',fmt(slip.paid))+'</div><h3 class="slipbalance">'+slip.label+' · PKR '+fmt(Math.abs(slip.balance))+'</h3>'+table(['Date','Opening balance','Credit','Payment received','Running balance',''],activity,'No activity recorded for this customer.')+'</section>'
 }
 function customerEntry(payment){
   const person=get('Customer').find(p=>p.id===selectedCustomer);if(!person)return;
@@ -259,7 +260,8 @@ function printProgress(source='progressReport'){
   const doc=frame.contentDocument;doc.title=$('stationBrand').textContent+' '+progressPeriod+' progress '+date();
   const style=doc.createElement('style');
   style.textContent='@page{size:A4 landscape;margin:12mm}body{font:10pt Arial,sans-serif;color:#17212b}.cards{display:flex;gap:20px;margin:12px 0}.card{display:grid;gap:4px}table{border-collapse:collapse;width:100%}th,td{text-align:left;border:1px solid #aaa;padding:4px}thead{display:table-header-group}tr{break-inside:avoid}h3{break-after:avoid}td{vertical-align:top;overflow-wrap:anywhere}dl,dd{margin:0}dt{color:#52655c}dd{margin-bottom:3px}.scroll table{font-size:8pt}';
-  doc.head.append(style);const stationHeading=doc.createElement('h1');stationHeading.textContent=$('stationBrand').textContent;doc.body.append(stationHeading);const printed=$(source).cloneNode(true);if(source==='customerStatement')doc.title=$('stationBrand').textContent+' · '+printed.querySelector('h2').textContent;printed.querySelectorAll('button').forEach(b=>b.remove());doc.body.append(printed);frame.contentWindow.focus();frame.contentWindow.print()
+  if(source==='customerStatement')style.textContent+='@page{size:A4 portrait}#customerStatement{background:white;border-top:4px solid #145548;padding:20px}.sliphead,.slipbalance{display:flex;justify-content:space-between;color:#145548}.sliphead{gap:12px;flex-wrap:wrap}.slipcustomer,.slipbalance{padding:12px;background:#eef4f1}.slipcustomer b{font-size:1.3em}.slipbalance{border-block:1px solid #a7bfb6}';
+  doc.head.append(style);const stationHeading=doc.createElement('h1');stationHeading.textContent=$('stationBrand').textContent;if(source!=='customerStatement')doc.body.append(stationHeading);const printed=$(source).cloneNode(true);if(source==='customerStatement')doc.title=$('stationBrand').textContent+' · '+printed.querySelector('h2').textContent;printed.querySelectorAll('button').forEach(b=>b.remove());doc.body.append(printed);frame.contentWindow.focus();frame.contentWindow.print()
 }
 function render(){if(!staffUser)return;let dt=date(),a=rows.filter(r=>r.date===dt),past=rows.filter(r=>r.date<=dt),d=stats(a),p=stats(past),v='',t=typeForPage[page];
 $('nav').innerHTML=pages.map((n,i)=>'<button data-page="'+i+'" class="'+(i===page?'on':'')+'">'+n+'</button>').join('');
