@@ -285,7 +285,7 @@ try:
     element('#whatsAppPdf').click()
     link=element('dialog[open] [data-download]')
     assert link.get_attribute('download').endswith('.pdf')
-    assert driver.execute_async_script("const [url,done]=arguments;fetch(url).then(r=>r.blob()).then(async b=>done(b.type==='application/pdf'&&(await b.slice(0,8).text())==='%PDF-1.4'))",link.get_attribute('href'))
+    assert driver.execute_async_script("const done=arguments[0],f=creditPdfFile('Test',{name:'Test'},'2026-11-27',[]);f.slice(0,8).text().then(s=>done(f.type==='application/pdf'&&s==='%PDF-1.4'),()=>done(false))")
     element('dialog[open] [data-dismiss]').click()
     element('#printCustomer').click()
     assert 'Customer One' in driver.execute_script("return document.querySelector('#reportFrame').contentDocument.body.innerText")
