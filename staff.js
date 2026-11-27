@@ -40,6 +40,38 @@ async function lock(){
 async function refresh(first=false){let s=await api('/state');applyStationName(s.stationName);staffUser=s.user;version=s.revision;rows=s.rows;if(!isSales())accountList=await api('/users');if(first)progressOwner='';if(first)page=isSales()?1:0;if(isSales())page=1;access.hidden=true;main.hidden=false;$('account').hidden=false;$('account').textContent='Sign out';$('identity').textContent=staffUser.name+' · '+staffUser.role;document.querySelector('footer').textContent='PKR · Litres · Saved on this station computer';render()}
 async function staffSave(next){await api('/ledger',{revision:version,rows:next});await refresh()}
 $('account').onclick=async()=>{await api('/logout',{});await lock()};
+
+async function manageCompletedShift(id,deleting){
+  const first=get('Reading').find(r=>r.id===id);
+  if(staffUser.role!=='admin'||!first)return;
+  const members=get('Reading').filter(r=>shiftGroupKey(r)===shiftGroupKey(first));
+  const revision=version;
+  if(deleting){
+    const description=first.date+' · '+first.shift+' · '+first.person+' ('+members.length+' nozzle'+(members.length===1?'':'s')+')';
+    if(confirm('Permanently delete '+description+'? All readings and meter photos for this shift will be removed and reports recalculated.')){
+      await api('/delete-completed',{id,revision});await refresh();
+    }
+    return;
+  }
+  const shiftOptions=shifts.map(name=>'<option '+(name===first.shift?'selected':'')+'>'+E(name)+'</option>').join('');
+  let html=input('Business date','date','date','value="'+E(first.date)+'"')+
+    '<label>Shift<select name="shift">'+shiftOptions+'</select></label>'+
+    '<label>Start time<input type="time" name="startTime" '+(first.startTime?'required':'')+' value="'+E(first.startTime||'')+'"></label>';
+  for(const [i,r] of members.entries()){
+    html+='<fieldset><legend>'+E(nozzleName(r.nozzle))+'</legend>';
+    for(const [field,label] of [['open','Opening litres'],['close','Closing litres'],['rate','Sale price per litre (PKR)'],['cost','Purchase price per litre (PKR)'],['returned','Returned litres']]){
+      if(field==='returned'&&r.readingMode==='remaining')continue;
+      html+=input(label,field+i,'number','step="any" min="0" value="'+E(r[field]??0)+'"');
+    }
+    html+='</fieldset>';
+  }
+  dialog('Edit completed shift · '+E(first.person),html,'Save shift',async b=>{
+    const entries=members.map((r,i)=>({id:r.id,open:Number(b['open'+i]),close:Number(b['close'+i]),rate:Number(b['rate'+i]),cost:Number(b['cost'+i]),returned:r.readingMode==='remaining'?0:Number(b['returned'+i])}));
+    await api('/edit-completed',{id,revision,date:b.date,startTime:b.startTime,shift:b.shift,entries});
+    $('date').value=b.date;await refresh();
+  });
+}
+
 function shiftControls(r){let photo=stage=>r[stage+'Photo']===false?'':'<button data-photo="'+E(r.id)+'" data-stage="'+stage+'">'+(stage==='opening'?'Opening photo':'Closing photo')+'</button>';return photo('opening')+(r.close===''?'<button data-close="'+E(r.id)+'">Close shift</button>':photo('closing'))}
 function staffLayout(){
   if(!isSales())$('nav').insertAdjacentHTML('beforeend','<button data-page="8" class="'+(page===8?'on':'')+'">Users &amp; passwords</button>');
@@ -165,7 +197,7 @@ function accountAction(id,reset){
   });
   if(!reset){const f=d.querySelector('form');f.elements.name.value=user.name;f.elements.role.value=user.role;f.elements.status.value=user.pending||user.active?'Active':'Disabled'}
 }
-$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.id==='renameStation'){dialog('Change station name',input('Station name','name','text','maxlength="80" value="'+E($('stationBrand').textContent)+'"'),'Save name',async b=>{await api('/station-name',b);await refresh()})}if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.workphoto)await showWorkPhoto(el.dataset.workphoto,el.dataset.stage);if(el.dataset.photo)await showWorkPhoto(el.dataset.photo,el.dataset.stage);if(el.dataset.work)await workRecord(el.dataset.work);if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
+$('view').addEventListener('click',async e=>{let el=e.target;try{if(el.dataset.editCompleted)await manageCompletedShift(el.dataset.editCompleted,false);if(el.dataset.deleteCompleted)await manageCompletedShift(el.dataset.deleteCompleted,true);if(el.id==='renameStation'){dialog('Change station name',input('Station name','name','text','maxlength="80" value="'+E($('stationBrand').textContent)+'"'),'Save name',async b=>{await api('/station-name',b);await refresh()})}if(el.dataset.edituser)accountAction(el.dataset.edituser,false);if(el.dataset.resetuser)accountAction(el.dataset.resetuser,true);if(el.dataset.close)shiftForm(rows.find(r=>r.id===el.dataset.close));if(el.dataset.workphoto)await showWorkPhoto(el.dataset.workphoto,el.dataset.stage);if(el.dataset.photo)await showWorkPhoto(el.dataset.photo,el.dataset.stage);if(el.dataset.work)await workRecord(el.dataset.work);if(el.id==='manage')await staffAccounts();if(el.id==='migrate'){let legacy=JSON.parse(localStorage.getItem(key)||'[]'),merged=new Map(rows.map(r=>[r.id,r]));for(let r of legacy){let existing=merged.get(r.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(r)&&existing.type!=='Nozzle')throw Error('A record conflicts with the shared ledger. Use a backup to resolve it.');if(!existing||existing.type==='Nozzle'&&!rows.some(x=>x.nozzle===r.id))merged.set(r.id,r)}if(confirm('Import these records into the shared station ledger and clear the old copy on this browser?')){await save([...merged.values()]);localStorage.removeItem(key);render()}}}catch(err){alert(err.message)}});
 lock();
 
 document.addEventListener('visibilitychange',()=>{if(staffUser&&!document.hidden&&!document.querySelector('dialog[open]'))refresh().catch(err=>console.warn(err.message))});
