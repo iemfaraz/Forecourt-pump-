@@ -1,9 +1,9 @@
 'use strict';
 const scope=self.registration.scope;
 const prefix='forecourt-shell:'+scope+':';
-const cacheName=prefix+'station-reset-1';
+const cacheName=prefix+'credit-pdf-1';
 const index=new URL('index.html',scope).href;
-const scripts=['device-store.js','app.js','staff.js'];
+const scripts=['device-store.js','credit-pdf.js','app.js','staff.js'];
 const paths=new Set(scripts.map(name=>new URL(name,scope).pathname));
 self.addEventListener('install',event=>{
   event.waitUntil((async()=>{
