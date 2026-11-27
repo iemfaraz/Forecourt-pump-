@@ -333,6 +333,21 @@ try:
     record=element('.work-record tbody').text
     assert all(value in record for value in ['Night','Test operator','Opened by','Closed by','165,000'])
     assert not driver.find_elements(By.CSS_SELECTOR,'.work-record [data-workphoto]')
+    element('.work-record [data-dismiss]').click()
+    element('#account').click()
+    sign_in('admin',newpass)
+    element('[data-page="7"]').click()
+    element('#resetStation').click()
+    fill('dialog[open] [name=confirmation]', 'RESET')
+    element('dialog[open] .primary').click()
+    wait.until(lambda d:'Type RESET STATION' in element('dialog[open] .err').text)
+    fill('dialog[open] [name=confirmation]', 'RESET STATION')
+    element('dialog[open] .primary').click()
+    wait.until(lambda d:'Register the first administrator' in element('#access').text)
+    assert driver.execute_async_script("""const done=arguments[0],r=indexedDB.open('forecourt-pump-station-device');r.onsuccess=()=>{
+      const stores=['users','ledger','photos'],tx=r.result.transaction(stores),counts=[];
+      for(const store of stores){const c=tx.objectStore(store).count();c.onsuccess=()=>counts.push(c.result)}
+      tx.oncomplete=()=>done(counts.sort())}""")==[0,0,0]
     print("Verified tank stock and all-nozzle shift handover.")
     print("Verified admin setup, staff creation, role navigation, shift handover, persistence and photo retrieval.")
 finally:
