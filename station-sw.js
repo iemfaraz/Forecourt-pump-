@@ -1,7 +1,7 @@
 'use strict';
 const scope=self.registration.scope;
 const prefix='forecourt-shell:'+scope+':';
-const cacheName=prefix+'mart-pos-1';
+const cacheName=prefix+'mart-counter-2';
 const index=new URL('index.html',scope).href;
 const scripts=['device-store.js','credit-pdf.js','app.js','staff.js','mart.js','mart-codes.js'];
 const paths=new Set(scripts.map(name=>new URL(name,scope).pathname));
