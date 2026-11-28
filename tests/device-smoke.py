@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from selenium import webdriver
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -361,7 +362,7 @@ try:
     element('dialog[open] .primary').click()
     wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'dialog[open]')))
     element('#add').click()
-    element('[name=scan]').send_keys(code+'\\n')
+    element('[name=scan]').send_keys(code, Keys.ENTER)
     fill('[data-qty]', '6')
     element('dialog[open] .primary').click()
     wait.until(lambda d:'Insufficient stock' in element('dialog[open] .err').text)
