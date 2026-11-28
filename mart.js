@@ -2,11 +2,12 @@
 const martMoney=n=>Math.round((n+Number.EPSILON)*100)/100;
 const martCode=()=> 'M'+crypto.randomUUID().replaceAll('-','').slice(0,12).toUpperCase();
 const martItems=()=>get('Mart item').sort((a,b)=>a.name.localeCompare(b.name));
+function martDelta(r,l){return r.type==='Mart count'?l.after-l.before:r.movement==='sale'?-l.qty:l.qty}
 function martStock(all,day){
   const stock=new Map();
   for(const r of all){
-    if(r.type!=='Mart'||!r.lines||r.date>day)continue;
-    for(const l of r.lines)stock.set(l.item,(stock.get(l.item)||0)+(r.movement==='sale'?-l.qty:l.qty));
+    if(!['Mart','Mart count'].includes(r.type)||!r.lines||r.date>day)continue;
+    for(const l of r.lines)stock.set(l.item,(stock.get(l.item)||0)+martDelta(r,l));
   }
   return stock;
 }
@@ -14,16 +15,25 @@ function validateMart(all){
   const products=all.filter(r=>r.type==='Mart item'),codes=new Set(),ids=new Set(products.map(p=>p.id)),onHand=new Map();
   for(const p of products){
     if(!/^[!-~]{1,64}$/.test(p.code)||codes.has(p.code))throw Error('Use a unique printable barcode of 1–64 characters.');
+    if(p.reorder!==undefined&&(!Number.isSafeInteger(p.reorder)||p.reorder<0))throw Error('Invalid reorder level.');
     codes.add(p.code);
   }
-  const moves=all.filter(r=>r.type==='Mart'&&r.lines!==undefined).sort((a,b)=>a.date.localeCompare(b.date)||(a.movement==='sale')-(b.movement==='sale'));
+  const moves=all.filter(r=>r.type==='Mart count'||r.type==='Mart'&&r.lines!==undefined).sort((a,b)=>a.date.localeCompare(b.date)||Number(martDelta(a,a.lines?.[0]||{})<0)-Number(martDelta(b,b.lines?.[0]||{})<0));
   for(const r of moves){
+    if(r.type==='Mart count'){
+      const l=r.lines?.[0];
+      if(!l||r.lines.length!==1||!ids.has(l.item)||![l.before,l.after].every(v=>Number.isSafeInteger(v)&&v>=0)||l.before===l.after||!['Shelf count','Damage','Expiry','Loss'].includes(r.reason)||r.reason!=='Shelf count'&&l.after>l.before)throw Error('Check the stock adjustment and its reason.');
+      const qty=(onHand.get(l.item)||0)+martDelta(r,l);
+      if(qty<0)throw Error('This adjustment would leave negative stock.');
+      onHand.set(l.item,qty);continue;
+    }
+    if(r.tendered!==undefined&&(!Number.isFinite(r.tendered)||r.tendered<r.sale))throw Error('Cash received must cover the sale.');
     if(!['sale','receipt','opening'].includes(r.movement)||!Array.isArray(r.lines)||!r.lines.length)throw Error('Invalid mart stock transaction.');
     let total=0;
     for(const l of r.lines){
       if(!ids.has(l.item)||!Number.isSafeInteger(l.qty)||l.qty<=0||!Number.isFinite(l.price)||l.price<0)throw Error('Check the item, quantity and price.');
       total+=martMoney(l.qty*l.price);
-      const qty=(onHand.get(l.item)||0)+(r.movement==='sale'?-l.qty:l.qty);
+      const qty=(onHand.get(l.item)||0)+martDelta(r,l);
       if(qty<0)throw Error('Insufficient stock for '+l.name+' on '+r.date+'.');
       onHand.set(l.item,qty);
     }
@@ -37,8 +47,9 @@ function martMove(movement,name,lines,paid=0){
 function martView(d,p){
   const products=martItems(),stock=martStock(rows,date()),entries=get('Mart').filter(r=>r.date===date());
   return '<div class="cards">'+card('Sales · PKR',fmt(d.mart))+card('Units on hand',fmt(sum(products,r=>stock.get(r.id)||0)))+card('Products',fmt(products.length))+card('Mart cash · PKR',fmt(p.martcash))+'</div>'+
-    panel('Inventory','<div class="actions mart-tools"><button class="btn" data-mart="product">Add product</button><button class="btn" data-mart="receipt">Receive stock</button><label>Find product<input id="martSearch" type="search" placeholder="Name or barcode"></label></div>'+table(['Product','Barcode / QR value','On hand','Unit cost · PKR','Sale price · PKR',''],products.map(r=>[E(r.name),E(r.code),fmt(stock.get(r.id)||0),fmt(r.cost),fmt(r.price),'<button data-product="'+E(r.id)+'">Edit</button> <button data-label="'+E(r.id)+'">Print labels</button>']),'Add a product to begin.'))+
+    panel('Inventory','<div class="actions mart-tools"><button class="btn" data-mart="product">Add product</button><button class="btn" data-mart="receipt">Receive stock</button><label>Find product<input id="martSearch" type="search" placeholder="Name or barcode"></label></div>'+table(['Product','Barcode / QR value','On hand','Unit cost · PKR','Sale price · PKR','Stock status',''],products.map(r=>[E(r.name),E(r.code),fmt(stock.get(r.id)||0),fmt(r.cost),fmt(r.price),(stock.get(r.id)||0)===0?'Out of stock':(stock.get(r.id)||0)<=r.reorder?'Low · reorder':'In stock','<button data-count="'+E(r.id)+'">Adjust stock</button> <button data-product="'+E(r.id)+'">Edit</button> <button data-label="'+E(r.id)+'">Print labels</button>']),'Add a product to begin.'))+
     panel('Transactions · '+E(date()),table(['Description','Items','Sales · PKR','Purchases · PKR','Paid · PKR',''],entries.map(r=>[E(r.name),r.lines?fmt(sum(r.lines,l=>l.qty)):'—',fmt(r.sale),fmt(r.buy),fmt(r.paid),r.lines?'<button data-receipt="'+E(r.id)+'">View details</button>':edit(r)]),'No transactions on this date.')+'<button class="btn" data-mart="legacy">Add ledger adjustment</button>')+
+    panel('Stock adjustments · '+E(date()),table(['Product','Reason','Before','After','Change','Recorded by'],get('Mart count').filter(r=>r.date===date()).map(r=>{const l=r.lines[0];return [E(l.name),E(r.reason),fmt(l.before),fmt(l.after),fmt(martDelta(r,l)),E(r.actor)]}),'No stock adjustments on this date.'))+
     panel('Supplier balances',table(['Supplier','Remaining PKR'],groups(get('Mart').filter(r=>r.date<=date()&&(r.buy||r.paid)),r=>r.buy-r.paid),'No balances recorded.'));
 }
 function martProduct(p){
@@ -46,14 +57,24 @@ function martProduct(p){
   const num=(label,key,value)=>input(label,key,'number','min="0" step=".01" value="'+value+'"');
   const html=input('Product name','name','text','maxlength="120" value="'+E(p?.name||'')+'"')+
     input('Barcode / QR value','code','text','maxlength="64" value="'+E(code)+'"')+'<button type="button" class="btn" data-generate>Generate new code</button>'+
-    num('Unit cost (PKR)','cost',p?.cost||0)+num('Sale price (PKR)','price',p?.price||0)+(p?'':input('Opening quantity','qty','number','min="0" step="1" value="0"'));
+    input('Low-stock level (units)','reorder','number','min="0" step="1" value="'+(p?.reorder??0)+'"')+num('Unit cost (PKR)','cost',p?.cost||0)+num('Sale price (PKR)','price',p?.price||0)+(p?'':input('Opening quantity','qty','number','min="0" step="1" value="0"'));
   const f=dialog(p?'Edit mart product':'Add mart product',html,'Save product',async b=>{
-    const item={id:p?.id||crypto.randomUUID(),type:'Mart item',name:b.name.trim(),code:b.code.trim(),cost:+b.cost,price:+b.price};
+    const item={id:p?.id||crypto.randomUUID(),type:'Mart item',name:b.name.trim(),code:b.code.trim(),cost:+b.cost,price:+b.price,reorder:+b.reorder};
     const next=[...rows.filter(r=>r.id!==item.id),item];
     if(+b.qty>0)next.push(martMove('opening','Opening inventory',[{item:item.id,name:item.name,qty:+b.qty,price:item.cost}]));
     await save(next);
   });
   f.querySelector('[data-generate]').onclick=()=>f.querySelector('[name=code]').value=martCode();
+}
+function martCount(p){
+  const day=date(),before=martStock(rows,day).get(p.id)||0,revision=version;
+  const html='<p class="wide">Recorded on hand: '+fmt(before)+' units · '+E(day)+'</p>'+choices('Reason','reason',['Shelf count','Damage','Expiry','Loss'].map(s=>[s,s]))+input('Physical units remaining','after','number','min="0" step="1" value="'+before+'"');
+  dialog('Adjust stock · '+E(p.name),html,'Save adjustment',async b=>{
+    if(version!==revision||day!==date())throw Error('Reopen this adjustment to review current stock.');
+    const after=Number(b.after);
+    if(after===before)throw Error('The quantities match. No adjustment is needed.');
+    await save([...rows,{type:'Mart count',id:crypto.randomUUID(),date:day,reason:b.reason,actor:staffUser.name,lines:[{item:p.id,name:p.name,before,after}]}]);
+  });
 }
 function martLabels(p){
   const d=document.createElement('dialog');
@@ -74,17 +95,30 @@ function martCheckout(receiving=false){
   const products=martItems();if(!products.length){martProduct();return}
   const cart=new Map(),stock=martStock(rows,date()),options=products.map(p=>'<option value="'+E(p.id)+'">'+E(p.name)+' · '+E(p.code)+'</option>').join('');
   const html='<div class="wide"><label>Scan barcode or QR<input name="scan" autocomplete="off" placeholder="Scan, or type code and press Enter"></label><label>Choose product<select name="item">'+options+'</select></label><div class="actions"><button type="button" class="btn" data-add-line>Add product</button><button type="button" class="btn" data-camera>Scan with camera</button></div><video hidden playsinline muted style="max-width:100%"></video><p data-scan-status role="status"></p><div data-cart></div><h3 data-total></h3></div>'+
-    (receiving?input('Supplier','supplier')+input('Amount paid (PKR)','paid','number','min="0" step=".01" value="0"'):'');
+    (receiving?input('Supplier','supplier')+input('Amount paid (PKR)','paid','number','min="0" step=".01" value="0"'):'<label>Cash received (PKR)<input name="tendered" type="number" min="0" step=".01" placeholder="Exact amount"></label><p data-change aria-live="polite"></p>');
   const d=dialog(receiving?'Receive mart stock':'Mart checkout',html,receiving?'Save stock receipt':'Complete cash sale',async b=>{
     if(!cart.size)throw Error('Add at least one product.');
     const lines=Array.from(cart,([item,line])=>({item,...line}));
     const transaction=martMove(receiving?'receipt':'sale',receiving?b.supplier.trim():'Cash sale',lines,receiving?+b.paid:0);
     if(receiving&&transaction.paid>transaction.buy)throw Error('Payment exceeds this purchase.');
+    if(!receiving){
+      transaction.tendered=b.tendered===''?transaction.sale:Number(b.tendered);
+      transaction.cashier=staffUser.name;
+      if(transaction.tendered<transaction.sale)throw Error('Cash received is below the sale total.');
+    }
     const next=rows.map(p=>receiving&&p.type==='Mart item'&&cart.has(p.id)?{...p,cost:cart.get(p.id).price}:p);
     await save([...next,transaction]);
   });
   const scan=d.querySelector('[name=scan]'),status=d.querySelector('[data-scan-status]');
-  function total(){d.querySelector('[data-total]').textContent='Total · PKR '+fmt(martMoney(sum([...cart.values()],l=>martMoney(l.qty*l.price))))}
+  function total(){
+    const amount=martMoney(sum([...cart.values()],l=>martMoney(l.qty*l.price)));
+    d.querySelector('[data-total]').textContent='Total · PKR '+fmt(amount);
+    if(!receiving){
+      const v=d.querySelector('[name=tendered]').value,diff=martMoney((v===''?amount:Number(v))-amount);
+      d.querySelector('[data-change]').textContent=(diff<0?'Still due':'Change due')+' · PKR '+fmt(Math.abs(diff));
+    }
+  }
+  if(!receiving)d.querySelector('[name=tendered]').oninput=total;
   function draw(){
     d.querySelector('[data-cart]').innerHTML=table(['Product','Qty',receiving?'Unit cost':'Sale price',''],[...cart].map(([id,l])=>[E(l.name),'<input aria-label="Quantity" style="width:5em" data-qty="'+E(id)+'" required type="number" min="1" step="1" value="'+l.qty+'">',receiving?'<input aria-label="Unit cost" style="width:7em" data-price="'+E(id)+'" required type="number" min="0" step=".01" value="'+l.price+'">':fmt(l.price),'<button type="button" data-drop="'+E(id)+'">Remove</button>']),'Scan or choose a product.');total();
   }
@@ -117,7 +151,19 @@ function martCheckout(receiving=false){
 }
 function martDetails(r){
   const d=document.createElement('dialog');d.innerHTML='<h2>'+E(r.name)+'</h2><p>'+E(r.date)+'</p>'+table(['Product','Qty','Unit PKR','Total PKR'],r.lines.map(l=>[E(l.name),fmt(l.qty),fmt(l.price),fmt(martMoney(l.qty*l.price))]))+'<p>Total · PKR '+fmt(r.sale||r.buy||r.opening)+'</p><button class="btn">Close</button>';
-  document.body.append(d);d.onclose=()=>d.remove();d.querySelector('button').onclick=()=>d.close();d.showModal();
+  document.body.append(d);d.onclose=()=>d.remove();d.querySelector('button').onclick=()=>d.close();
+  if(r.movement==='sale'){
+    const title=d.querySelector('h2');title.textContent=$('stationBrand').textContent+' · Sales receipt';
+    title.insertAdjacentHTML('afterend','<p>Receipt '+E(r.id)+'<br>'+E(r.cashier||'')+'</p>');
+    if(r.tendered!==undefined)d.querySelector('button').insertAdjacentHTML('beforebegin','<p>Cash received · PKR '+fmt(r.tendered)+'<br>Change · PKR '+fmt(martMoney(r.tendered-r.sale))+'</p>');
+    const print=document.createElement('button');print.className='btn primary';print.textContent='Print receipt';d.append(print);print.onclick=()=>{
+      d.querySelector('iframe')?.remove();const frame=document.createElement('iframe');frame.style.cssText='position:fixed;left:-200vw';d.append(frame);
+      const doc=frame.contentDocument;doc.title='Mart receipt '+r.id;const style=doc.createElement('style');style.textContent='body{font:12px sans-serif;max-width:80mm;margin:auto}table{width:100%;border-collapse:collapse}th,td{padding:3px;text-align:left}p,td{overflow-wrap:anywhere}';doc.head.append(style);
+      for(const node of d.children)if(!node.matches('button,iframe'))doc.body.append(doc.importNode(node,true));
+      frame.contentWindow.print();
+    };
+  }
+  d.showModal();
 }
 document.addEventListener('click',e=>{
   if(page!==3||!staffUser||isSales())return;
@@ -125,6 +171,7 @@ document.addEventListener('click',e=>{
   if(el.dataset.mart==='product')martProduct();
   if(el.dataset.mart==='receipt')martCheckout(true);
   if(el.dataset.mart==='legacy')show('Mart');
+  if(el.dataset.count)martCount(get('Mart item').find(p=>p.id===el.dataset.count));
   if(el.dataset.product)martProduct(get('Mart item').find(r=>r.id===el.dataset.product));
   if(el.dataset.label)martLabels(get('Mart item').find(r=>r.id===el.dataset.label));
   if(el.dataset.receipt)martDetails(get('Mart').find(r=>r.id===el.dataset.receipt));
@@ -132,3 +179,4 @@ document.addEventListener('click',e=>{
 document.addEventListener('input',e=>{if(e.target.id==='martSearch'){
   const q=e.target.value.toLowerCase();for(const row of e.target.closest('section').querySelectorAll('tbody tr'))row.hidden=!row.textContent.toLowerCase().includes(q);
 }});
+
