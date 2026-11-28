@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from selenium import webdriver
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -341,6 +342,36 @@ try:
     element('.work-record [data-dismiss]').click()
     element('#account').click()
     sign_in('admin',newpass)
+    element('[data-page="7"]').click()
+    element('[data-page="3"]').click()
+    element('[data-mart="product"]').click()
+    fill('dialog[open] [name=name]', 'Test water')
+    code=element('dialog[open] [name=code]').get_attribute('value')
+    fill('dialog[open] [name=price]', '80')
+    fill('dialog[open] [name=cost]', '50')
+    fill('dialog[open] [name=qty]', '3')
+    element('dialog[open] .primary').click()
+    element('[data-label]').click()
+    assert element('[data-sticker] svg[data-bars]').get_attribute('width')
+    assert element('[data-qr] svg')
+    element('dialog[open] [data-dismiss]').click()
+    element('[data-mart="receipt"]').click()
+    fill('dialog[open] [name=supplier]', 'Test supplier')
+    element('[data-add-line]').click()
+    fill('[data-qty]', '2')
+    element('dialog[open] .primary').click()
+    wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'dialog[open]')))
+    element('#add').click()
+    element('[name=scan]').send_keys(code, Keys.ENTER)
+    fill('[data-qty]', '6')
+    element('dialog[open] .primary').click()
+    wait.until(lambda d:'Insufficient stock' in element('dialog[open] .err').text)
+    fill('[data-qty]', '2')
+    element('dialog[open] .primary').click()
+    wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'dialog[open]')))
+    product=next(row for row in driver.find_elements(By.CSS_SELECTOR,'#view tbody tr') if 'Test water' in row.text)
+    assert product.find_elements(By.TAG_NAME,'td')[2].text=='3'
+    assert 'Cash sale' in element('#view').text and '160' in element('#view').text
     element('[data-page="7"]').click()
     element('#resetStation').click()
     fill('dialog[open] [name=confirmation]', 'RESET')
