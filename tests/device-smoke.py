@@ -348,6 +348,7 @@ try:
     fill('dialog[open] [name=name]', 'Test water')
     code=element('dialog[open] [name=code]').get_attribute('value')
     fill('dialog[open] [name=price]', '80')
+    fill('dialog[open] [name=reorder]', '2')
     fill('dialog[open] [name=cost]', '50')
     fill('dialog[open] [name=qty]', '3')
     element('dialog[open] .primary').click()
@@ -367,11 +368,24 @@ try:
     element('dialog[open] .primary').click()
     wait.until(lambda d:'Insufficient stock' in element('dialog[open] .err').text)
     fill('[data-qty]', '2')
+    fill('dialog[open] [name=tendered]', '200')
+    assert '40' in element('[data-change]').text
     element('dialog[open] .primary').click()
     wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR,'dialog[open]')))
     product=next(row for row in driver.find_elements(By.CSS_SELECTOR,'#view tbody tr') if 'Test water' in row.text)
     assert product.find_elements(By.TAG_NAME,'td')[2].text=='3'
     assert 'Cash sale' in element('#view').text and '160' in element('#view').text
+    sale=next(row for row in driver.find_elements(By.CSS_SELECTOR,'#view tbody tr') if 'Cash sale' in row.text)
+    sale.find_element(By.CSS_SELECTOR,'[data-receipt]').click()
+    assert 'Change · PKR 40' in element('dialog[open]').text
+    element('dialog[open] button').click()
+    element('[data-count]').click()
+    Select(element('dialog[open] [name=reason]')).select_by_visible_text('Expiry')
+    fill('dialog[open] [name=after]', '2')
+    element('dialog[open] .primary').click()
+    wait.until(lambda d:'Low · reorder' in element('#view').text)
+    assert 'Expiry' in element('#view').text
+
     element('[data-page="7"]').click()
     element('#resetStation').click()
     fill('dialog[open] [name=confirmation]', 'RESET')
@@ -389,3 +403,4 @@ try:
 finally:
     driver.quit()
     server.shutdown()
+
